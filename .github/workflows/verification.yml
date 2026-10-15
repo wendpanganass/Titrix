@@ -1,0 +1,46 @@
+# Vérification automatique à chaque envoi de code : analyse, types, calculs, règles SQL, construction.
+name: Vérification
+on:
+  push:
+  pull_request:
+
+jobs:
+  verifier:
+    runs-on: ubuntu-latest
+    services:
+      # Base PostgreSQL jetable pour tester les scripts SQL et les règles de gestion.
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: titrix_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGPASSWORD: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Installation des dépendances
+        run: npm ci
+      - name: Analyse du code (lint)
+        run: npm run lint
+      - name: Contrôle des types
+        run: npx next typegen && npx tsc --noEmit
+      - name: Tests du moteur de calcul (recette)
+        run: npm test
+      - name: Scripts SQL (deux passages pour vérifier qu'ils sont rejouables)
+        run: |
+          for passage in 1 2; do
+            for f in base/01_tables.sql base/02_regles.sql base/03_donnees_initiales.sql; do
+              psql -h localhost -U postgres -d titrix_test -v ON_ERROR_STOP=1 -q -f "$f" > /dev/null
+            done
+          done
+      - name: Tests des règles de gestion en base
+        run: psql -h localhost -U postgres -d titrix_test -v ON_ERROR_STOP=1 -q -f base/tests/regles.sql | grep "TOUS LES TESTS DES RÈGLES SONT PASSÉS"
+      - name: Construction de l'application
+        run: npm run build
