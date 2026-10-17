@@ -1,6 +1,7 @@
 /**
  * Paramètres généraux : seuils d'alerte, tolérances, devise de référence, limites, sessions.
  */
+import Link from "next/link";
 import { Formulaire } from "@/composants/client/Formulaire";
 import { Contenu, EnTete } from "@/composants/EnTete";
 import { Carte, Champ, Message } from "@/composants/ui";
@@ -54,9 +55,15 @@ export default async function Parametres() {
             </div>
           </Formulaire>
         </Carte>
-        {tout && (nb?.n === 0 || nb?.demo) && (
+        {tout && (
           <Carte titre="Données de démonstration" sousTitre="Jeu entièrement fictif (« Banque Démo », États et sociétés « Démo ») pour présenter Titrix">
-            <Formulaire action={chargerDemonstration} bouton="Charger les données de démonstration" confirmation="Charger le jeu de démonstration fictif ? À faire uniquement sur une base de présentation, avant toute donnée réelle.">
+            {nb && nb.n > 0 && !nb.demo && (
+              <Message ton="alerte">
+                La base contient déjà {nb.n} instrument(s) (voir <Link href="/instruments">Instruments</Link>) : la démonstration ne se charge que sur une base
+                sans instrument, pour ne jamais se mélanger à de vraies données.
+              </Message>
+            )}
+            <Formulaire action={chargerDemonstration} bouton={nb?.n === 0 || nb?.demo ? "Charger les données de démonstration" : null} confirmation="Charger le jeu de démonstration fictif ? À faire uniquement sur une base de présentation, avant toute donnée réelle.">
               <p className="petit mut" style={{ margin: 0 }}>
                 8 instruments, 10 positions chez 3 conservateurs, opérations validées à quatre yeux, échéanciers calculés, encaissements,
                 grevages, un arrêté verrouillé et quelques anomalies volontaires (coupon en retard, titre échu non remboursé, écart
