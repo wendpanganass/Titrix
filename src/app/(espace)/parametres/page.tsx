@@ -5,13 +5,21 @@ import { Formulaire } from "@/composants/client/Formulaire";
 import { Contenu, EnTete } from "@/composants/EnTete";
 import { Carte, Champ, Message } from "@/composants/ui";
 import { enregistrerParametres, recalculerTout } from "@/app/actions/referentiels";
+import { chargerDemonstration } from "@/app/actions/demonstration";
+import { lireUn } from "@/lib/db";
 import { lireParametres, listesReferentiels } from "@/donnees/referentiels";
 import { exigerSession } from "@/lib/session";
 import { CONVENTIONS, LIBELLES_CONVENTION, VERSION_MOTEUR } from "@/moteur";
 
 export default async function Parametres() {
   const s = await exigerSession();
-  const [p, r] = await Promise.all([lireParametres(), listesReferentiels()]);
+  const [p, r, nb] = await Promise.all([
+    lireParametres(),
+    listesReferentiels(),
+    lireUn<{ n: number; demo: boolean }>(
+      "select (select count(*)::int from instruments) as n, exists (select 1 from utilisateurs where email = 'validateur.demo@titrix.demo') as demo",
+    ),
+  ]);
   const tout = s.peut("gerer_referentiels");
   const limites = s.peut("parametrer");
   const v = (k: string) => p.brut[k]?.valeur ?? "";
@@ -42,6 +50,19 @@ export default async function Parametres() {
             </div>
           </Formulaire>
         </Carte>
+        {tout && (nb?.n === 0 || nb?.demo) && (
+          <Carte titre="Données de démonstration" sousTitre="Jeu entièrement fictif (« Banque Démo », États et sociétés « Démo ») pour présenter Titrix">
+            <Formulaire action={chargerDemonstration} bouton="Charger les données de démonstration" confirmation="Charger le jeu de démonstration fictif ? À faire uniquement sur une base de présentation, avant toute donnée réelle.">
+              <p className="petit mut" style={{ margin: 0 }}>
+                8 instruments, 10 positions chez 3 conservateurs, opérations validées à quatre yeux, échéanciers calculés, encaissements,
+                grevages, un arrêté verrouillé et quelques anomalies volontaires (coupon en retard, titre échu non remboursé, écart
+                d&apos;encaissement, écart de relevé). Deux comptes fictifs sont créés : « Gestionnaire Démo » et « Validateur Démo ».
+                Disponible seulement tant qu&apos;aucun instrument n&apos;existe.
+                {nb?.demo && " La démonstration est chargée : connectez-vous avec les comptes fictifs pour la présenter."}
+              </p>
+            </Formulaire>
+          </Carte>
+        )}
         {tout && (
           <Carte titre="Maintenance" sousTitre="Recalcule les échéances de toutes les positions (après une évolution du moteur ou des jours fériés)">
             <Formulaire action={recalculerTout} bouton="Recalculer toutes les échéances" boutonClasse="btn-sec" confirmation="Recalculer toutes les échéances ? Les échéances encaissées sont conservées.">
