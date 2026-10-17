@@ -11,6 +11,10 @@ import { lireParametres, listesReferentiels } from "@/donnees/referentiels";
 import { exigerSession } from "@/lib/session";
 import { CONVENTIONS, LIBELLES_CONVENTION, VERSION_MOTEUR } from "@/moteur";
 
+// Le chargement de la démonstration et le recalcul complet enchaînent de nombreuses requêtes :
+// on laisse jusqu'à 60 secondes à l'action serveur (Vercel coupe sinon plus tôt).
+export const maxDuration = 60;
+
 export default async function Parametres() {
   const s = await exigerSession();
   const [p, r, nb] = await Promise.all([
