@@ -6,7 +6,7 @@ import { notFound } from "next/navigation";
 import { BoutonAction, Formulaire } from "@/composants/client/Formulaire";
 import { Contenu, EnTete } from "@/composants/EnTete";
 import { Badge, Carte, Champ, Indicateur, Message, Vide } from "@/composants/ui";
-import { abandonnerImport, enregistrerCorrespondance, lancerImport } from "@/app/actions/imports";
+import { abandonnerImport, annulerImport, enregistrerCorrespondance, lancerImport } from "@/app/actions/imports";
 import type { ImportEnBase, Rapport } from "@/donnees/imports";
 import { listesReferentiels } from "@/donnees/referentiels";
 import { lireUn } from "@/lib/db";
@@ -31,7 +31,22 @@ export default async function DetailImport(props: PageProps<"/import/[id]">) {
       <Contenu>
         <p className="petit noprint"><Link href="/import">← Imports</Link></p>
         {imp.statut === "importe" && <Message ton="bon">Import terminé. Les lignes en quarantaine sont consultables dans <Link href="/controles">Alertes et anomalies</Link>.</Message>}
-        {imp.statut === "abandonne" && <Message ton="info">Import abandonné.</Message>}
+        {imp.statut === "importe" && (s.peut("importer") || s.peut("valider")) && (
+          <Carte titre="Supprimer ou remplacer cet import" sousTitre="Pour remplacer : annulez cet import, puis déposez le fichier corrigé (écran Import et reprise).">
+            <p className="petit" style={{ marginTop: 0 }}>
+              L&apos;annulation retire les positions d&apos;ouverture encore non validées, annule celles déjà validées (elles restent visibles,
+              barrées — un validateur autre que l&apos;importateur doit alors le faire), neutralise les grevages et encaissements importés,
+              supprime les positions et instruments créés par cet import devenus sans objet, et libère les lignes pour un nouvel import.
+              Les référentiels créés (conservateurs, émetteurs…) sont conservés. Tout est journalisé.
+            </p>
+            <BoutonAction action={annulerImport} champs={{ id }} libelle="Annuler cet import" classe="btn-danger btn-mini" motif="Motif de l'annulation (ex. : fichier corrigé à réimporter) :" />
+          </Carte>
+        )}
+        {imp.statut === "abandonne" && (
+          <Message ton="info">
+            {"annulation" in imp.rapport ? "Import annulé : ses données ont été retirées ou annulées ; ses lignes peuvent être réimportées." : "Import abandonné avant exécution."}
+          </Message>
+        )}
 
         {enAnalyse && (
           <Carte titre="1. Correspondance des colonnes" sousTitre="Proposée d'après les en-têtes du fichier : corrigez-la si besoin, puis calculez l'aperçu.">

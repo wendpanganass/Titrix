@@ -11,7 +11,7 @@ import { lireDate, lireTexte } from "@/lib/format";
 import { lireCsv, lireXlsx } from "@/lib/lecture-fichier";
 import { CHAMPS, devinerCorrespondance, type NatureImport } from "@/lib/import-regles";
 import { journaliser } from "@/donnees/journal";
-import { analyserImport, executerImport, type ImportEnBase } from "@/donnees/imports";
+import { analyserImport, annulerImportEnBase, executerImport, type ImportEnBase } from "@/donnees/imports";
 import { regenererEcheances } from "@/donnees/echeances";
 import { lireParametres } from "@/donnees/referentiels";
 import { erreur, ok, type Retour } from "./commun";
@@ -127,6 +127,36 @@ export async function abandonnerImport(_: Retour, f: FormData): Promise<Retour> 
     });
     revalidatePath("/import");
     return ok("Import abandonné (le fichier lu reste conservé pour traçabilité).");
+  } catch (e) {
+    return erreur(e);
+  }
+}
+
+/**
+ * Annulation d'un import terminé (pour le supprimer ou le remplacer par un fichier corrigé).
+ * Rien n'est effacé silencieusement : les opérations déjà validées restent visibles, barrées.
+ */
+export async function annulerImport(_: Retour, f: FormData): Promise<Retour> {
+  try {
+    const s = await exigerPermission("importer").catch(() => exigerPermission("valider"));
+    const id = lireTexte(f.get("id"));
+    const motif = lireTexte(f.get("motif"));
+    if (!motif) throw new ErreurMetier("Le motif de l'annulation est obligatoire.");
+    const b = await transaction(s.u.id, async (c) => {
+      const bilan = await annulerImportEnBase(c, id, { id: s.u.id, peutValider: s.peut("valider"), peutLever: s.peut("lever_grevage") }, motif).catch((e) => {
+        if (e instanceof Error && e.message.startsWith("ANNUL:")) throw new ErreurMetier(e.message.slice(6));
+        throw e;
+      });
+      for (const p of bilan.touchees) await regenererEcheances(c, p);
+      await journaliser(c, s, "Import annulé", "import", id, { motif, ...bilan, touchees: bilan.touchees.length });
+      return bilan;
+    });
+    revalidatePath("/", "layout");
+    return ok(
+      `Import annulé : ${b.supprimees} opération(s) non validée(s) retirée(s), ${b.annulees} opération(s) validée(s) annulée(s), ` +
+        `${b.grevages} grevage(s) et ${b.encaissements} encaissement(s) neutralisés, ${b.positionsSupprimees} position(s) et ${b.instrumentsSupprimes} instrument(s) supprimés. ` +
+        "Vous pouvez maintenant importer le fichier corrigé.",
+    );
   } catch (e) {
     return erreur(e);
   }

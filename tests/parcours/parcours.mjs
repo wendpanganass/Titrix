@@ -308,6 +308,22 @@ verifier(csv.status() === 200 && (await csv.text()).includes("Nominal détenu"),
   await aller("/controles");
   verifier((await page.locator("text=Quarantaine des imports").count()) === 1 && (await page.locator("td", { hasText: "Divergence" }).count()) >= 1, "lignes en quarantaine visibles dans les anomalies");
   await capture("16_controles_apres_import");
+  // Annulation de l'import puis réimport du même fichier (remplacement).
+  await aller("/import");
+  await page.locator("tbody a", { hasText: "base_titres_fictive.xlsx" }).last().click();
+  await page.waitForURL(/\/import\/[0-9a-f-]{36}/);
+  await page.locator("button", { hasText: "Annuler cet import" }).click();
+  await page.waitForSelector("text=Import annulé", { timeout: 15000 });
+  verifier((await page.locator("text=Import annulé").first().innerText()).length > 0, "import annulé");
+  await aller("/instruments?q=IMP-");
+  verifier((await page.locator("tbody tr").count()) === 0, "instruments créés par l'import supprimés");
+  await aller("/import");
+  await page.setInputFiles("input[name=fichier]", chemin);
+  await Promise.all([page.waitForURL(/\/import\/[0-9a-f-]{36}/), page.click("form button[type=submit]")]);
+  await page.fill("input[name=date_reprise]", "2026-09-30");
+  await page.click("form button[type=submit]");
+  const reprise = await message();
+  verifier(reprise.includes("3 ligne(s) à importer"), `après annulation, le fichier peut être réimporté (${reprise})`);
 }
 
 // 9. Téléphone ------------------------------------------------------------------------------------

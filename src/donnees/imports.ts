@@ -129,6 +129,21 @@ export async function analyserImport(c: PoolClient, imp: ImportEnBase): Promise<
   const clesExistantes = new Set(
     (await c.query<{ cle_import: string }>("select cle_import from operations where cle_import = any($1)", [lignes.map((x) => x.cle)])).rows.map((r) => r.cle_import),
   );
+  // Positions déjà reprises (position d'ouverture active) : une ligne corrigée ne doit pas s'ajouter à l'ancienne.
+  const reprises = await c.query<{ code_interne: string; isin: string | null; cons: string; compte: string; pfc: string; pfl: string }>(
+    `select i.code_interne, i.isin, lower(cs.nom) as cons, p.compte_conservation as compte, lower(f.code) as pfc, lower(f.libelle) as pfl
+       from operations o join positions p on p.id = o.position_id join instruments i on i.id = p.instrument_id
+       join conservateurs cs on cs.id = p.conservateur_id join portefeuilles f on f.id = p.portefeuille_id
+      where o.type = 'position_ouverture' and o.statut in ('soumis','valide','regle')`,
+  );
+  const dejaReprise = (l: LigneTitre) =>
+    reprises.rows.some(
+      (r) =>
+        (r.code_interne === l.codeInterne || r.isin === l.codeInterne) &&
+        r.cons === l.conservateur.toLowerCase() &&
+        r.compte === l.compte &&
+        (r.pfc === l.portefeuille.toLowerCase() || r.pfl === l.portefeuille.toLowerCase()),
+    );
   const premiereDuFichier = new Map<string, LigneTitre>();
   const clesVues = new Set<string>();
   const nouveaux = new Set<string>();
@@ -144,6 +159,17 @@ export async function analyserImport(c: PoolClient, imp: ImportEnBase): Promise<
     if (clesExistantes.has(cle) || clesVues.has(cle)) {
       sortie.push({ numero: l.numero, action: "doublon", motif: clesVues.has(cle) ? "Ligne identique plus haut dans le fichier" : "Déjà importée (même position d'ouverture)", resume, notes });
       totaux.doublon++;
+      continue;
+    }
+    if (dejaReprise(l)) {
+      sortie.push({
+        numero: l.numero,
+        action: "quarantaine",
+        motif: "Position déjà reprise par un import précédent avec d'autres valeurs : pour la remplacer, annulez d'abord l'import précédent (bouton « Annuler cet import »)",
+        resume,
+        notes,
+      });
+      totaux.quarantaine++;
       continue;
     }
     // Divergences : avec le référentiel, sinon avec la première ligne du même code dans le fichier.
@@ -305,4 +331,129 @@ export async function executerImport(c: PoolClient, imp: ImportEnBase, utilisate
     [imp.id, JSON.stringify(rapport), rapport.lignes.length, rapport.totaux.importer, rapport.totaux.doublon, rapport.totaux.quarantaine],
   );
   return rapport;
+}
+
+export interface BilanAnnulation {
+  supprimees: number;
+  annulees: number;
+  grevages: number;
+  encaissements: number;
+  positionsSupprimees: number;
+  instrumentsSupprimes: number;
+  /** Positions encore présentes dont les échéances sont à recalculer. */
+  touchees: string[];
+}
+
+/**
+ * Annule un import terminé, dans le respect des règles de traçabilité :
+ *  - opérations encore non validées (saisies par l'importateur) : retirées ;
+ *  - opérations déjà validées : annulées (elles restent visibles, barrées) — par un validateur autre que l'importateur ;
+ *  - grevages en attente : repassés en brouillon ; grevages actifs : levés ;
+ *  - encaissements importés : annulés ;
+ *  - positions et instruments créés par cet import et devenus sans objet : supprimés ;
+ *  - les clés d'import sont libérées : le fichier corrigé peut être réimporté.
+ */
+export async function annulerImportEnBase(
+  c: PoolClient,
+  importId: string,
+  u: { id: string; peutValider: boolean; peutLever: boolean },
+  motif: string,
+): Promise<BilanAnnulation> {
+  const imp = await c.query<{ statut: string; nom_fichier: string; cree_par: string }>(
+    "select statut, nom_fichier, cree_par from imports where id = $1 for update",
+    [importId],
+  );
+  if (!imp.rows[0]) throw new Error("ANNUL:Import introuvable.");
+  if (imp.rows[0].statut !== "importe") throw new Error("ANNUL:Seul un import terminé peut être annulé.");
+  const { nom_fichier } = imp.rows[0];
+  const bilan: BilanAnnulation = { supprimees: 0, annulees: 0, grevages: 0, encaissements: 0, positionsSupprimees: 0, instrumentsSupprimes: 0, touchees: [] };
+  const touchees = new Set<string>();
+
+  // Grevages d'abord : un grevage actif empêcherait d'annuler la position qu'il couvre.
+  const grevages = await c.query<{ id: string; statut: string; position_id: string }>(
+    "select g.id, g.statut, g.position_id from grevages g join positions p on p.id = g.position_id where g.commentaire like $1 and g.statut in ('soumis','actif','brouillon')",
+    [`Import ${nom_fichier} ligne %`],
+  );
+  for (const g of grevages.rows) {
+    touchees.add(g.position_id);
+    if (g.statut === "soumis" || g.statut === "brouillon") {
+      // Jamais validé : repassé en brouillon puis supprimé. Si la base n'a pas la règle à jour
+      // (script 02 non rejoué), le grevage reste simplement en brouillon, sans effet sur le disponible.
+      if (g.statut === "soumis") await c.query("update grevages set statut = 'brouillon', commentaire = commentaire || ' — import annulé' where id = $1", [g.id]);
+      await c.query("savepoint suppression_grevage");
+      try {
+        await c.query("delete from grevages where id = $1", [g.id]);
+        await c.query("release savepoint suppression_grevage");
+      } catch {
+        await c.query("rollback to savepoint suppression_grevage");
+      }
+    } else if (g.statut === "actif") {
+      if (!u.peutLever) throw new Error("ANNUL:Un grevage issu de cet import est actif : sa mainlevée doit être faite par le back-office ou un validateur.");
+      await c.query("update grevages set statut = 'leve', motif_levee = $2 where id = $1", [g.id, `Annulation de l'import ${nom_fichier}`]);
+    }
+    bilan.grevages++;
+  }
+
+  const ops = await c.query<{ id: string; statut: string; initiateur_id: string; position_id: string }>(
+    "select id, statut, initiateur_id, position_id from operations where import_id = $1 and statut <> 'annule' order by numero",
+    [importId],
+  );
+  const validees = ops.rows.filter((o) => o.statut === "valide" || o.statut === "regle");
+  if (validees.length && (!u.peutValider || validees.some((o) => o.initiateur_id === u.id)))
+    throw new Error(
+      `ANNUL:${validees.length} position(s) d'ouverture de cet import sont déjà validées : leur annulation doit être faite par un validateur autre que la personne qui a importé le fichier.`,
+    );
+  const nonValidees = ops.rows.filter((o) => !(o.statut === "valide" || o.statut === "regle"));
+  if (nonValidees.some((o) => o.initiateur_id !== u.id) && !u.peutValider)
+    throw new Error("ANNUL:Seul l'auteur de l'import ou un validateur peut l'annuler.");
+
+  for (const o of ops.rows) {
+    touchees.add(o.position_id);
+    if (o.initiateur_id === u.id && (o.statut === "soumis" || o.statut === "rejete" || o.statut === "brouillon")) {
+      // Jamais validée : on la retire (repassage en brouillon par son initiateur, puis suppression).
+      if (o.statut !== "brouillon") await c.query("update operations set statut = 'brouillon' where id = $1", [o.id]);
+      await c.query("delete from operations where id = $1", [o.id]);
+      bilan.supprimees++;
+    } else {
+      await c.query("update operations set statut = 'annule', motif_annulation = $2 where id = $1", [o.id, `Annulation de l'import ${nom_fichier} : ${motif}`]);
+      bilan.annulees++;
+    }
+  }
+  // Libère les clés : un fichier corrigé pourra être réimporté.
+  await c.query("update operations set cle_import = null where import_id = $1", [importId]);
+
+  const enc = await c.query<{ position_id: string }>(
+    "update encaissements set statut = 'annule', motif_annulation = $2, cle_import = null where import_id = $1 and statut = 'actif' returning position_id",
+    [importId, `Annulation de l'import ${nom_fichier} : ${motif}`],
+  );
+  bilan.encaissements = enc.rowCount ?? 0;
+  for (const e of enc.rows) touchees.add(e.position_id);
+  await c.query("update encaissements set cle_import = null where import_id = $1", [importId]);
+
+  // Positions et instruments créés par l'import (même horodatage de transaction) et devenus sans objet.
+  const pos = await c.query<{ id: string }>(
+    `delete from positions p where p.cree_le = (select importe_le from imports where id = $1)
+        and not exists (select 1 from operations o where o.position_id = p.id or o.position_destination_id = p.id)
+        and not exists (select 1 from grevages g where g.position_id = p.id)
+        and not exists (select 1 from encaissements x where x.position_id = p.id)
+      returning id`,
+    [importId],
+  );
+  bilan.positionsSupprimees = pos.rowCount ?? 0;
+  for (const p of pos.rows) touchees.delete(p.id);
+  const ins = await c.query(
+    "delete from instruments i where i.cree_le = (select importe_le from imports where id = $1) and not exists (select 1 from positions p where p.instrument_id = i.id)",
+    [importId],
+  );
+  bilan.instrumentsSupprimes = ins.rowCount ?? 0;
+
+  await c.query(
+    "update quarantaine set statut = 'rejetee', commentaire = 'Import annulé', traite_par = $2, traite_le = now() where import_id = $1 and statut = 'ouverte'",
+    [importId, u.id],
+  );
+  await c.query(
+    "update imports set statut = 'abandonne', rapport = rapport || jsonb_build_object('annulation', jsonb_build_object('par', $2::text, 'le', now(), 'motif', $3::text, 'bilan', $4::jsonb)) where id = $1",
+    [importId, u.id, motif, JSON.stringify({ ...bilan, touchees: undefined })],
+  );
+  return { ...bilan, touchees: [...touchees] };
 }

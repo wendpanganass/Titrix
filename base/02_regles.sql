@@ -588,9 +588,20 @@ create trigger t_journal_ajout_seul before update or delete on journal
 drop trigger if exists t_audit_ajout_seul on audit;
 create trigger t_audit_ajout_seul before update or delete on audit
   for each row execute function interdire_modification();
+-- Mouvements de grevage : jamais modifiés ; supprimés seulement avec leur grevage resté en brouillon
+-- (jamais validé, par exemple lors de l'annulation d'un import).
+create or replace function proteger_mouvement_grevage() returns trigger
+language plpgsql as $$
+begin
+  if tg_op = 'DELETE' and not exists (select 1 from grevages where id = old.grevage_id) then
+    return old;  -- suppression en cascade du grevage brouillon
+  end if;
+  raise exception 'Les mouvements de grevage sont en ajout seul : ils ne peuvent être ni modifiés ni supprimés.' using errcode = 'P0001';
+end $$;
+
 drop trigger if exists t_mouvements_ajout_seul on mouvements_grevage;
 create trigger t_mouvements_ajout_seul before update or delete on mouvements_grevage
-  for each row execute function interdire_modification();
+  for each row execute function proteger_mouvement_grevage();
 -- Protège aussi contre un « truncate » accidentel.
 drop trigger if exists t_journal_truncate on journal;
 create trigger t_journal_truncate before truncate on journal

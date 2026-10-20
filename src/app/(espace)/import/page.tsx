@@ -12,8 +12,8 @@ import { dateHeureFr } from "@/lib/format";
 
 export default async function Import() {
   const s = await exigerSession();
-  const imports = await lire<{ id: string; nom_fichier: string; nature: string; statut: string; nb_lignes: number; nb_importees: number; nb_doublons: number; nb_quarantaine: number; cree_le: string; auteur: string | null; empreinte: string }>(
-    "select i.id, i.nom_fichier, i.nature, i.statut, i.nb_lignes, i.nb_importees, i.nb_doublons, i.nb_quarantaine, i.cree_le, u.nom as auteur, i.empreinte from imports i left join utilisateurs u on u.id = i.cree_par order by i.cree_le desc limit 100",
+  const imports = await lire<{ id: string; nom_fichier: string; nature: string; statut: string; nb_lignes: number; nb_importees: number; nb_doublons: number; nb_quarantaine: number; annule: boolean; cree_le: string; auteur: string | null; empreinte: string }>(
+    "select i.id, i.nom_fichier, i.nature, i.statut, (i.rapport ? 'annulation') as annule, i.nb_lignes, i.nb_importees, i.nb_doublons, i.nb_quarantaine, i.cree_le, u.nom as auteur, i.empreinte from imports i left join utilisateurs u on u.id = i.cree_par order by i.cree_le desc limit 100",
   );
   return (
     <>
@@ -64,7 +64,7 @@ export default async function Import() {
                       <td className="d">{i.nb_importees}</td>
                       <td className="d">{i.nb_doublons}</td>
                       <td className="d">{i.nb_quarantaine}</td>
-                      <td><Badge ton={i.statut === "importe" ? "bon" : i.statut === "analyse" ? "alerte" : "gris"}>{i.statut === "importe" ? "Importé" : i.statut === "analyse" ? "En analyse" : "Abandonné"}</Badge></td>
+                      <td><Badge ton={i.statut === "importe" ? "bon" : i.statut === "analyse" ? "alerte" : "gris"}>{i.statut === "importe" ? "Importé" : i.statut === "analyse" ? "En analyse" : i.annule ? "Annulé" : "Abandonné"}</Badge></td>
                     </tr>
                   ))}
                 </tbody>
