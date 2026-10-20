@@ -14,22 +14,24 @@ import { regenererInstrument } from "@/donnees/echeances";
 import { CONVENTIONS, FREQUENCES, PROFILS } from "@/moteur";
 import { erreur, ok, type Retour } from "./commun";
 
+/**
+ * Lit le formulaire. Le code interne n'est jamais saisi : il est attribué par le système à la création
+ * (voir genererCode) et ne change plus ensuite. L'ISIN est saisi librement : seul son format est exigé ;
+ * une clé de contrôle qui ne correspond pas est signalée par un avertissement, sans bloquer.
+ */
 async function lireInstrument(f: FormData) {
-  const code = normaliserCode(lireTexte(f.get("code_interne")));
   const isin = normaliserCode(lireTexte(f.get("isin"))) || null;
   const libelle = lireTexte(f.get("libelle"));
   const devise = lireTexte(f.get("devise_code")).toUpperCase();
-  if (!code) throw new ErreurMetier("Le code interne est obligatoire.");
   if (!libelle) throw new ErreurMetier("Le libellé est obligatoire.");
   if (!devise) throw new ErreurMetier("La devise est obligatoire.");
-  if (isin && !isinValide(isin)) {
-    const corrige = isinCorrige(isin);
+  let avertissement = "";
+  if (isin && !/^[A-Z]{2}[A-Z0-9]{9}[0-9]$/.test(isin))
     throw new ErreurMetier(
-      corrige
-        ? `Le code ISIN « ${isin} » a une clé de contrôle fausse (dernier chiffre) : le code valide serait « ${corrige} ». Vérifiez-le sur le document d'émission, ou laissez le champ ISIN vide et utilisez seulement le code interne.`
-        : `Le code ISIN « ${isin} » n'a pas le bon format : 2 lettres de pays, 9 lettres ou chiffres, puis 1 chiffre de contrôle (12 caractères). Vous pouvez aussi laisser le champ vide.`,
+      `Le code ISIN « ${isin} » n'a pas le bon format : 12 caractères (2 lettres de pays, 9 lettres ou chiffres, 1 chiffre final). Vous pouvez aussi laisser le champ vide.`,
     );
-  }
+  if (isin && !isinValide(isin))
+    avertissement = ` Attention : la clé de contrôle de l'ISIN « ${isin} » ne correspond pas (le calcul donnerait « ${isinCorrige(isin)} ») ; vérifiez-le sur le document d'émission.`;
   const convention = lireTexte(f.get("convention"));
   if (!CONVENTIONS.includes(convention as (typeof CONVENTIONS)[number])) throw new ErreurMetier("Convention de calcul inconnue.");
   const frequence = Number(lireTexte(f.get("frequence")));
@@ -38,8 +40,7 @@ async function lireInstrument(f: FormData) {
   if (!PROFILS.includes(profil as (typeof PROFILS)[number])) throw new ErreurMetier("Profil d'amortissement inconnu.");
   const taux = lireNombre(f.get("taux_coupon"));
   const retenue = lireNombre(f.get("taux_retenue"));
-  return {
-    code_interne: code,
+  const valeurs = {
     isin,
     libelle,
     emetteur_id: lireTexte(f.get("emetteur_id")) || null,
@@ -60,23 +61,38 @@ async function lireInstrument(f: FormData) {
     taux_retenue: retenue === null ? 0 : retenue / 100,
     conditions_remboursement: lireTexte(f.get("conditions_remboursement")),
   };
+  return { valeurs, avertissement };
+}
+
+/** Code interne attribué automatiquement : TYPE-PAYS-ANNÉE D'ÉCHÉANCE-N° (ex. OAT-BF-2029-001). */
+async function genererCode(c: PoolClient, v: { type_code: string | null; pays_code: string | null; date_echeance: string | null }): Promise<string> {
+  const base = [normaliserCode(v.type_code ?? "") || "TIT", v.pays_code || "XX", v.date_echeance?.slice(0, 4) || "SE"].join("-");
+  // Verrou transactionnel : deux créations simultanées n'obtiennent jamais le même numéro.
+  await c.query("select pg_advisory_xact_lock(hashtext('titrix_code_instrument'))");
+  const r = await c.query<{ n: number }>(
+    `select coalesce(max(substring(code_interne from '-([0-9]+)$')::int), 0) as n
+       from instruments where code_interne like $1 || '-%' and code_interne ~ ('^' || $2 || '-[0-9]+$')`,
+    [base, base.replace(/[.]/g, "\\.")],
+  );
+  return `${base}-${String(r.rows[0].n + 1).padStart(3, "0")}`;
 }
 
 export async function creerInstrument(_: Retour, f: FormData): Promise<Retour> {
   try {
     const s = await exigerPermission("gerer_instruments");
-    const v = await lireInstrument(f);
-    const id = await transaction(s.u.id, async (c) => {
+    const { valeurs, avertissement } = await lireInstrument(f);
+    const res = await transaction(s.u.id, async (c) => {
+      const v = { code_interne: await genererCode(c, valeurs), ...valeurs };
       const cols = Object.keys(v);
       const r = await c.query<{ id: string }>(
         `insert into instruments (${cols.join(", ")}) values (${cols.map((_, k) => `$${k + 1}`).join(", ")}) returning id`,
         Object.values(v),
       );
       await journaliser(c, s, "Instrument créé", "instrument", r.rows[0].id, { code: v.code_interne, isin: v.isin });
-      return r.rows[0].id;
+      return { id: r.rows[0].id, code: v.code_interne };
     });
     revalidatePath("/instruments");
-    return ok(`Instrument ${v.code_interne} créé : il doit maintenant être validé par un validateur.`, { id });
+    return ok(`Instrument créé avec le code interne ${res.code} : il doit maintenant être validé par un validateur.${avertissement}`, { id: res.id });
   } catch (e) {
     return erreur(e);
   }
@@ -87,7 +103,7 @@ export async function modifierInstrument(_: Retour, f: FormData): Promise<Retour
     const s = await exigerPermission("gerer_instruments");
     const id = lireTexte(f.get("id"));
     const version = Number(lireTexte(f.get("version")));
-    const v = await lireInstrument(f);
+    const { valeurs: v, avertissement } = await lireInstrument(f);
     await transaction(s.u.id, async (c) => {
       const cols = Object.keys(v);
       // Protection contre les modifications concurrentes : la version lue doit être la version en base.
@@ -97,10 +113,10 @@ export async function modifierInstrument(_: Retour, f: FormData): Promise<Retour
       );
       if (!r.rowCount) throw new ErreurMetier("L'instrument a été modifié entre-temps par quelqu'un d'autre : rechargez la page.");
       await regenererInstrument(c, id);
-      await journaliser(c, s, "Instrument modifié", "instrument", id, { code: v.code_interne });
+      await journaliser(c, s, "Instrument modifié", "instrument", id, { isin: v.isin });
     });
     revalidatePath(`/instruments/${id}`);
-    return ok("Instrument modifié. Les échéanciers ont été recalculés ; une nouvelle validation est nécessaire.");
+    return ok(`Instrument modifié. Les échéanciers ont été recalculés ; une nouvelle validation est nécessaire.${avertissement}`);
   } catch (e) {
     return erreur(e);
   }

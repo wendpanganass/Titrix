@@ -134,7 +134,6 @@ await connecter("gestion@banque-demo.test", secrets["gestion@banque-demo.test"])
 await changerMdp(secrets["gestion@banque-demo.test"], "GestionDemo2026");
 await aller("/instruments");
 await deplier("Saisir un nouvel instrument");
-await page.fill("input[name=code_interne]", "DEMO-OAT-2029");
 await page.fill("input[name=libelle]", "OAT Démo 6,50 % 2024-2029");
 await page.selectOption("select[name=emetteur_id]", { label: "État Démo" });
 await page.selectOption("select[name=pays_code]", "BF");
@@ -146,15 +145,18 @@ await page.fill("input[name=taux_coupon]", "6,5");
 await page.selectOption("select[name=profil]", "constant");
 await page.fill("input[name=differe_mois]", "24");
 await page.click("form button[type=submit]");
-verifier((await message()).includes("créé"), "instrument créé (à valider)");
+{
+  const m = await message();
+  verifier(m.includes("OAT-BF-2029-001"), `instrument créé avec un code attribué automatiquement (${m})`);
+}
 await aller("/positions?instrument=x");
-await page.selectOption("select[name=instrument_id]", { label: "DEMO-OAT-2029 — OAT Démo 6,50 % 2024-2029" });
+await page.selectOption("select[name=instrument_id]", { label: "OAT-BF-2029-001 — OAT Démo 6,50 % 2024-2029" });
 await page.selectOption("select[name=conservateur_id]", { label: "SGI Démo A" });
 await page.fill("input[name=compte_conservation]", "000123");
 await page.click("form button[type=submit]");
 verifier((await message()).includes("Position créée"), "position créée");
 await aller("/positions");
-await page.locator("a", { hasText: "DEMO-OAT-2029" }).first().click();
+await page.locator("a", { hasText: "OAT-BF-2029-001" }).first().click();
 await page.waitForURL(/\/positions\/[0-9a-f-]{36}/);
 const urlPosition = page.url();
 const f = page.locator("section", { hasText: "Nouvelle opération" });

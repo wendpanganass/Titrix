@@ -31,10 +31,10 @@ export function ChampsInstrument({ r, v = {}, conventionDefaut, deviseDefaut }: 
   const pct = (x?: number) => (x === undefined || x === null ? "" : String(Math.round(x * 1e8) / 1e6).replace(".", ","));
   return (
     <div className="form-grille quatre">
-      <Champ libelle="Code interne" obligatoire aide="Identifiant unique, sans suffixe de conservateur">
-        <input className="champ" name="code_interne" defaultValue={v.code_interne ?? ""} required />
+      <Champ libelle="Code interne" aide={v.code_interne ? "Attribué par le système, non modifiable" : "Attribué automatiquement à l'enregistrement : TYPE-PAYS-ANNÉE-N° (ex. OAT-BF-2029-001)"}>
+        <input className="champ" value={v.code_interne ?? "Automatique"} readOnly disabled style={{ background: "var(--head)", color: "var(--mut)" }} />
       </Champ>
-      <Champ libelle="Code ISIN" aide="12 caractères, clé contrôlée">
+      <Champ libelle="Code ISIN" aide="Saisie libre, 12 caractères ; facultatif">
         <input className="champ" name="isin" defaultValue={v.isin ?? ""} maxLength={12} />
       </Champ>
       <Champ libelle="Libellé" obligatoire className="plein">
