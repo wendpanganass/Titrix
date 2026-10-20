@@ -2,10 +2,10 @@
  * Import et reprise des données (§11) : dépôt d'un fichier Excel ou CSV, historique des imports.
  */
 import Link from "next/link";
-import { Formulaire } from "@/composants/client/Formulaire";
+import { BoutonAction, Formulaire } from "@/composants/client/Formulaire";
 import { Contenu, EnTete } from "@/composants/EnTete";
 import { Badge, Carte, Champ, Message, Vide } from "@/composants/ui";
-import { deposerFichier } from "@/app/actions/imports";
+import { deposerFichier, supprimerImport } from "@/app/actions/imports";
 import { lire } from "@/lib/db";
 import { exigerSession } from "@/lib/session";
 import { dateHeureFr } from "@/lib/format";
@@ -53,7 +53,7 @@ export default async function Import() {
           {imports.length === 0 ? <Vide>Aucun import.</Vide> : (
             <div className="tab-wrap">
               <table className="tab">
-                <thead><tr><th>Fichier</th><th>Nature</th><th>Déposé</th><th className="d">Lignes</th><th className="d">Importées</th><th className="d">Doublons</th><th className="d">Quarantaine</th><th>Statut</th></tr></thead>
+                <thead><tr><th>Fichier</th><th>Nature</th><th>Déposé</th><th className="d">Lignes</th><th className="d">Importées</th><th className="d">Doublons</th><th className="d">Quarantaine</th><th>Statut</th>{s.peut("importer") && <th className="noprint">Actions</th>}</tr></thead>
                 <tbody>
                   {imports.map((i) => (
                     <tr key={i.id}>
@@ -65,6 +65,17 @@ export default async function Import() {
                       <td className="d">{i.nb_doublons}</td>
                       <td className="d">{i.nb_quarantaine}</td>
                       <td><Badge ton={i.statut === "importe" ? "bon" : i.statut === "analyse" ? "alerte" : "gris"}>{i.statut === "importe" ? "Importé" : i.statut === "analyse" ? "En analyse" : i.annule ? "Annulé" : "Abandonné"}</Badge></td>
+                      {s.peut("importer") && (
+                        <td className="noprint">
+                          {i.statut === "importe" ? (
+                            <Link className="btn-sec btn-mini" href={`/import/${i.id}`}>Annuler…</Link>
+                          ) : !i.annule ? (
+                            <BoutonAction action={supprimerImport} champs={{ id: i.id }} libelle="Supprimer" classe="btn-danger btn-mini" confirmation={`Supprimer « ${i.nom_fichier} » de l'historique ? Cet import n'a jamais été exécuté : aucune donnée n'est touchée.`} />
+                          ) : (
+                            <span className="petit mut">Conservé (traçabilité)</span>
+                          )}
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>

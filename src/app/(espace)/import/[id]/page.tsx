@@ -6,7 +6,7 @@ import { notFound } from "next/navigation";
 import { BoutonAction, Formulaire } from "@/composants/client/Formulaire";
 import { Contenu, EnTete } from "@/composants/EnTete";
 import { Badge, Carte, Champ, Indicateur, Message, Vide } from "@/composants/ui";
-import { abandonnerImport, annulerImport, enregistrerCorrespondance, lancerImport } from "@/app/actions/imports";
+import { abandonnerImport, annulerImport, enregistrerCorrespondance, lancerImport, supprimerImport } from "@/app/actions/imports";
 import type { ImportEnBase, Rapport } from "@/donnees/imports";
 import { listesReferentiels } from "@/donnees/referentiels";
 import { lireUn } from "@/lib/db";
@@ -48,6 +48,11 @@ export default async function DetailImport(props: PageProps<"/import/[id]">) {
           </Message>
         )}
 
+        {enAnalyse && (
+          <div className="actions noprint" style={{ marginBottom: 14 }}>
+            <BoutonAction action={supprimerImport} champs={{ id, retour: "liste" }} libelle="Supprimer ce fichier lu (jamais importé)" classe="btn-danger btn-mini" confirmation="Supprimer ce fichier de l'historique ? Il n'a jamais été importé : aucune donnée n'est touchée." />
+          </div>
+        )}
         {enAnalyse && (
           <Carte titre="1. Correspondance des colonnes" sousTitre="Proposée d'après les en-têtes du fichier : corrigez-la si besoin, puis calculez l'aperçu.">
             <Formulaire action={enregistrerCorrespondance} bouton="Enregistrer et calculer l'aperçu">

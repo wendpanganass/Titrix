@@ -133,6 +133,38 @@ export async function abandonnerImport(_: Retour, f: FormData): Promise<Retour> 
 }
 
 /**
+ * Suppression d'une ligne de l'historique : seulement pour un import jamais exécuté (en analyse ou
+ * abandonné) et auquel aucune donnée n'est rattachée. Un import exécuté s'annule (voir annulerImport),
+ * il reste dans l'historique pour la traçabilité.
+ */
+export async function supprimerImport(_: Retour, f: FormData): Promise<Retour> {
+  try {
+    const s = await exigerPermission("importer");
+    const id = lireTexte(f.get("id"));
+    const nom = await transaction(s.u.id, async (c) => {
+      const r = await c.query<{ nom_fichier: string }>(
+        `delete from imports i where i.id = $1 and i.statut in ('analyse','abandonne')
+            and not exists (select 1 from operations o where o.import_id = i.id)
+            and not exists (select 1 from encaissements x where x.import_id = i.id)
+            and not exists (select 1 from quarantaine q where q.import_id = i.id)
+          returning nom_fichier`,
+        [id],
+      );
+      if (!r.rows[0])
+        throw new ErreurMetier("Cet import a été exécuté : il reste dans l'historique pour la traçabilité. Utilisez « Annuler cet import » pour retirer ses données.");
+      await journaliser(c, s, "Import supprimé de l'historique (jamais exécuté)", "import", id, { nom: r.rows[0].nom_fichier });
+      return r.rows[0].nom_fichier;
+    });
+    revalidatePath("/import");
+    if (lireTexte(f.get("retour")) !== "liste") return ok(`« ${nom} » supprimé de l'historique.`);
+  } catch (e) {
+    return erreur(e);
+  }
+  // Supprimé depuis sa propre fiche : retour à la liste des imports.
+  redirect("/import");
+}
+
+/**
  * Annulation d'un import terminé (pour le supprimer ou le remplacer par un fichier corrigé).
  * Rien n'est effacé silencieusement : les opérations déjà validées restent visibles, barrées.
  */

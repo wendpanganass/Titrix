@@ -290,7 +290,7 @@ verifier(csv.status() === 200 && (await csv.text()).includes("Nominal détenu"),
     await page.setInputFiles("input[name=fichier]", chemin);
     await Promise.all([page.waitForURL(/\/import\/[0-9a-f-]{36}/), page.click("form button[type=submit]")]);
     await page.fill("input[name=date_reprise]", "2026-09-30");
-    await page.click("form button[type=submit]");
+    await page.locator("button", { hasText: "Enregistrer et calculer l'aperçu" }).click();
     const apercu = await message();
     if (passage === 1) {
       verifier(apercu.includes("3 ligne(s) à importer") && apercu.includes("3 en quarantaine"), `aperçu : 3 à importer, 3 en quarantaine (${apercu})`);
@@ -321,7 +321,7 @@ verifier(csv.status() === 200 && (await csv.text()).includes("Nominal détenu"),
   await page.setInputFiles("input[name=fichier]", chemin);
   await Promise.all([page.waitForURL(/\/import\/[0-9a-f-]{36}/), page.click("form button[type=submit]")]);
   await page.fill("input[name=date_reprise]", "2026-09-30");
-  await page.click("form button[type=submit]");
+  await page.locator("button", { hasText: "Enregistrer et calculer l'aperçu" }).click();
   const reprise = await message();
   verifier(reprise.includes("3 ligne(s) à importer"), `après annulation, le fichier peut être réimporté (${reprise})`);
 }
