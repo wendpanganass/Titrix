@@ -8,7 +8,7 @@ import type { PoolClient } from "pg";
 import { transaction } from "@/lib/db";
 import { ErreurMetier, exigerPermission } from "@/lib/session";
 import { lireDate, lireNombre, lireTexte } from "@/lib/format";
-import { isinValide, normaliserCode } from "@/lib/codes";
+import { isinCorrige, isinValide, normaliserCode } from "@/lib/codes";
 import { journaliser } from "@/donnees/journal";
 import { regenererInstrument } from "@/donnees/echeances";
 import { CONVENTIONS, FREQUENCES, PROFILS } from "@/moteur";
@@ -22,7 +22,14 @@ async function lireInstrument(f: FormData) {
   if (!code) throw new ErreurMetier("Le code interne est obligatoire.");
   if (!libelle) throw new ErreurMetier("Le libellé est obligatoire.");
   if (!devise) throw new ErreurMetier("La devise est obligatoire.");
-  if (isin && !isinValide(isin)) throw new ErreurMetier(`Le code ISIN « ${isin} » est invalide (format ou clé de contrôle).`);
+  if (isin && !isinValide(isin)) {
+    const corrige = isinCorrige(isin);
+    throw new ErreurMetier(
+      corrige
+        ? `Le code ISIN « ${isin} » a une clé de contrôle fausse (dernier chiffre) : le code valide serait « ${corrige} ». Vérifiez-le sur le document d'émission, ou laissez le champ ISIN vide et utilisez seulement le code interne.`
+        : `Le code ISIN « ${isin} » n'a pas le bon format : 2 lettres de pays, 9 lettres ou chiffres, puis 1 chiffre de contrôle (12 caractères). Vous pouvez aussi laisser le champ vide.`,
+    );
+  }
   const convention = lireTexte(f.get("convention"));
   if (!CONVENTIONS.includes(convention as (typeof CONVENTIONS)[number])) throw new ErreurMetier("Convention de calcul inconnue.");
   const frequence = Number(lireTexte(f.get("frequence")));

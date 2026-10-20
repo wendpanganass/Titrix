@@ -27,6 +27,13 @@ export function isinValide(isin: string): boolean {
   return somme % 10 === 0;
 }
 
+/** Code ISIN corrigé (même début, clé de contrôle recalculée), ou null si le format est faux. */
+export function isinCorrige(isin: string): string | null {
+  if (!/^[A-Z]{2}[A-Z0-9]{9}[0-9]$/.test(isin)) return null;
+  for (let d = 0; d < 10; d++) if (isinValide(isin.slice(0, 11) + d)) return isin.slice(0, 11) + d;
+  return null;
+}
+
 /**
  * Sépare un code du classeur en ISIN + suffixe éventuel (ex. « CI0000001234-B » ou « CI0000001234 (SGI) »).
  * Renvoie l'ISIN s'il est reconnu, le code interne nettoyé et le suffixe (identifiant de position).

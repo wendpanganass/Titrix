@@ -270,7 +270,7 @@ describe("Contrôles — grevage et disponible", () => {
   });
 });
 
-import { decouperCode, isinValide } from "@/lib/codes";
+import { decouperCode, isinCorrige, isinValide } from "@/lib/codes";
 import { cleImport, devinerCorrespondance, divergences, interpreterLigneTitre, lireDateBrute, lireTaux } from "@/lib/import-regles";
 describe("Reprise des données", () => {
   const entetes = ["Code titre", "Libellé", "Date échéance", "Taux", "Conservateur", "Encours nominal", "Montant utilisé", "Bénéficiaire"];
@@ -306,6 +306,7 @@ describe("Codes titres", () => {
   it("contrôle la clé ISIN", () => {
     expect(isinValide("US0378331005")).toBe(true);
     expect(isinValide("US0378331006")).toBe(false);
+    expect(isinCorrige("BF0000001000")).toBe("BF0000001008");
   });
   it("sépare ISIN et suffixe de position", () => {
     expect(decouperCode("US0378331005-B")).toEqual({ isin: "US0378331005", codeInterne: "US0378331005", suffixe: "B" });
