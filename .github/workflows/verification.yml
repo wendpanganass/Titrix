@@ -44,3 +44,26 @@ jobs:
         run: psql -h localhost -U postgres -d titrix_test -v ON_ERROR_STOP=1 -q -f base/tests/regles.sql | grep "TOUS LES TESTS DES RÈGLES SONT PASSÉS"
       - name: Construction de l'application
         run: npm run build
+
+  # Fusion automatique : quand la branche de travail passe toutes les vérifications,
+  # elle est fusionnée dans « main » (avance rapide uniquement, aucun historique réécrit).
+  fusion-main:
+    needs: verifier
+    if: github.event_name == 'push' && github.ref == 'refs/heads/claude/eager-albattani-xcpixr'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fusion dans main
+        run: |
+          git fetch origin main
+          if git merge-base --is-ancestor origin/main HEAD; then
+            git push origin HEAD:main
+            echo "main mis à jour avec ${GITHUB_SHA::7}"
+          else
+            echo "::error::main contient des modifications absentes de la branche de travail : fusion à faire manuellement."
+            exit 1
+          fi
