@@ -142,6 +142,49 @@ export async function validerInstrument(_: Retour, f: FormData): Promise<Retour>
 }
 
 /**
+ * Validation groupée des caractéristiques (reprise de données) : chaque instrument est traité
+ * séparément ; ceux qui ne peuvent pas l'être (incomplets, saisis par vous) sont signalés, les autres validés.
+ */
+export async function validerInstrumentsSelection(_: Retour, f: FormData): Promise<Retour> {
+  try {
+    const s = await exigerPermission("valider");
+    const ids = f.getAll("ids").map(String).filter(Boolean);
+    if (!ids.length) throw new ErreurMetier("Cochez au moins un instrument.");
+    const bilan = await transaction(s.u.id, async (c) => {
+      let valides = 0;
+      const refus: string[] = [];
+      for (const id of ids) {
+        await c.query("savepoint validation_instrument");
+        try {
+          const r = await c.query<{ code_interne: string }>("update instruments set statut = 'valide' where id = $1 and statut = 'a_valider' returning code_interne", [id]);
+          if (r.rowCount) {
+            await regenererInstrument(c, id);
+            valides++;
+          }
+          await c.query("release savepoint validation_instrument");
+        } catch (e) {
+          await c.query("rollback to savepoint validation_instrument");
+          const code = (await c.query<{ code_interne: string }>("select code_interne from instruments where id = $1", [id])).rows[0]?.code_interne ?? id;
+          refus.push(`${code} : ${(e as Error).message}`);
+        }
+      }
+      await journaliser(c, s, "Instruments validés (sélection)", "instrument", "", { valides, refus: refus.length });
+      return { valides, refus };
+    });
+    revalidatePath("/instruments");
+    revalidatePath("/", "layout");
+    const msg = `${bilan.valides} instrument(s) validé(s).`;
+    if (!bilan.refus.length) return ok(msg);
+    return {
+      ok: bilan.valides > 0,
+      message: `${msg} ${bilan.refus.length} non validé(s) : ${bilan.refus.slice(0, 5).join(" · ")}${bilan.refus.length > 5 ? " …" : ""}`,
+    };
+  } catch (e) {
+    return erreur(e);
+  }
+}
+
+/**
  * Échéancier officiel : une ligne par échéance « date ; part du capital en % »
  * (ex. « 2027-03-15;20 »). La somme doit faire 100 %. Il devra être validé par une autre personne.
  */

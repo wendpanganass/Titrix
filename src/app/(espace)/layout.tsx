@@ -59,7 +59,7 @@ export default async function EspaceLayout({ children }: { children: React.React
     {
       titre: "Administration",
       liens: [
-        ...(s.peut("importer") ? [{ href: "/import", libelle: "Import et reprise", icone: "import" as const }] : []),
+        ...(s.peut("importer") || s.peut("valider") ? [{ href: "/import", libelle: "Import et reprise", icone: "import" as const }] : []),
         { href: "/referentiels", libelle: "Référentiels", icone: "referentiels" },
         ...(s.peut("gerer_utilisateurs") ? [{ href: "/utilisateurs", libelle: "Utilisateurs", icone: "utilisateurs" as const }] : []),
         ...(s.peut("voir_journal") ? [{ href: "/journal", libelle: "Journal et audit", icone: "journal" as const }] : []),
