@@ -193,3 +193,25 @@ export async function annulerImport(_: Retour, f: FormData): Promise<Retour> {
     return erreur(e);
   }
 }
+
+/** Validation, en une fois, des positions d'ouverture d'un import (par un validateur autre que l'importateur). */
+export async function validerOperationsImport(_: Retour, f: FormData): Promise<Retour> {
+  try {
+    const s = await exigerPermission("valider");
+    const id = lireTexte(f.get("id"));
+    const n = await transaction(s.u.id, async (c) => {
+      const r = await c.query<{ position_id: string }>(
+        "update operations set statut = 'valide' where import_id = $1 and statut = 'soumis' and initiateur_id <> $2 returning position_id",
+        [id, s.u.id],
+      );
+      if (!r.rowCount) throw new ErreurMetier("Aucune position d'ouverture à valider (déjà validées, ou importées par vous-même : une autre personne doit les valider).");
+      for (const p of new Set(r.rows.map((x) => x.position_id))) await regenererEcheances(c, p);
+      await journaliser(c, s, "Positions d'ouverture de l'import validées", "import", id, { nombre: r.rowCount });
+      return r.rowCount ?? 0;
+    });
+    revalidatePath("/", "layout");
+    return ok(`${n} position(s) d'ouverture validée(s) : elles apparaissent maintenant dans le tableau de bord, les positions et l'échéancier.`);
+  } catch (e) {
+    return erreur(e);
+  }
+}

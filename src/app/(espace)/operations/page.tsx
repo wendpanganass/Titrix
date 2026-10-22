@@ -2,7 +2,7 @@
  * Opérations : liste filtrable, file de validation, validation groupée.
  */
 import Link from "next/link";
-import { Formulaire } from "@/composants/client/Formulaire";
+import { Formulaire, ToutCocher } from "@/composants/client/Formulaire";
 import { Contenu, EnTete } from "@/composants/EnTete";
 import { StatutOperation } from "@/composants/Statuts";
 import { Carte, Message, Vide } from "@/composants/ui";
@@ -44,7 +44,7 @@ export default async function Operations(props: PageProps<"/operations">) {
       <table className="tab">
         <thead>
           <tr>
-            {aValider && <th className="noprint"></th>}
+            {aValider && <th className="noprint"><ToutCocher nom="ids" /></th>}
             <th>N°</th><th>Type</th><th>Instrument</th><th>Conservateur · portefeuille</th><th>Date d&apos;effet</th><th className="d">Nominal</th><th>Initiateur</th><th>Statut</th>
           </tr>
         </thead>
@@ -95,12 +95,13 @@ export default async function Operations(props: PageProps<"/operations">) {
           <Message ton="info">Pour saisir une opération, ouvrez la <Link href="/positions">position</Link> concernée (ou créez-la), puis utilisez « Nouvelle opération ».</Message>
         )}
         <Carte titre={`${lignes.length} opération(s)`} sousTitre={lignes.length === 500 ? "500 dernières affichées : affinez les filtres" : undefined} flush>
-          {lignes.length === 0 ? (
-            <Vide>Aucune opération{filtre ? " pour ces filtres" : ""}.</Vide>
-          ) : aValider ? (
-            <Formulaire action={validerSelection} bouton="Valider les opérations cochées" confirmation="Valider les opérations cochées ? Vérifiez chaque pièce justificative au préalable.">
-              {tableau}
+          {aValider ? (
+            // Le formulaire reste affiché même vide, pour que le message de résultat (succès ou refus) reste visible.
+            <Formulaire action={validerSelection} bouton={lignes.length ? "Valider les opérations cochées" : null} confirmation="Valider les opérations cochées ? Vérifiez chaque pièce justificative au préalable." className="form-validation">
+              {lignes.length ? tableau : <Vide>Aucune opération à valider.</Vide>}
             </Formulaire>
+          ) : lignes.length === 0 ? (
+            <Vide>Aucune opération{filtre ? " pour ces filtres" : ""}.</Vide>
           ) : (
             tableau
           )}

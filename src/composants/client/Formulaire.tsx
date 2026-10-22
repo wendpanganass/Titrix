@@ -147,3 +147,18 @@ export function BoutonAction({
     </form>
   );
 }
+
+/** Case « tout cocher / tout décocher » pour les cases d'un même nom dans le formulaire. */
+export function ToutCocher({ nom }: { nom: string }) {
+  return (
+    <input
+      type="checkbox"
+      title="Tout cocher / tout décocher"
+      aria-label="Tout cocher"
+      onChange={(e) => {
+        const f = e.currentTarget.form;
+        f?.querySelectorAll<HTMLInputElement>(`input[type=checkbox][name="${nom}"]`).forEach((c) => (c.checked = e.currentTarget.checked));
+      }}
+    />
+  );
+}

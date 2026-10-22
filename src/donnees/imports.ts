@@ -72,6 +72,19 @@ export async function analyserImport(c: PoolClient, imp: ImportEnBase): Promise<
   const corr = imp.correspondance.colonnes;
   if (!imp.correspondance.dateReprise && imp.nature === "base_titres")
     return { lignes: [], totaux, nouveauxInstruments: 0, nouvellesPositions: 0, erreurGlobale: "Indiquez la date de reprise (date de la position d'ouverture)." };
+  if (imp.nature === "base_titres") {
+    // Une position d'ouverture datée d'une période verrouillée serait refusée à la validation : on le dit tout de suite.
+    const v = await c.query<{ d: string | null }>("select to_char(date_dernier_verrou(), 'YYYY-MM-DD') as d");
+    const verrou = v.rows[0]?.d;
+    if (verrou && imp.correspondance.dateReprise! <= verrou)
+      return {
+        lignes: [],
+        totaux,
+        nouveauxInstruments: 0,
+        nouvellesPositions: 0,
+        erreurGlobale: `La date de reprise (${imp.correspondance.dateReprise!.split("-").reverse().join("/")}) tombe dans une période verrouillée : l'arrêté du ${verrou.split("-").reverse().join("/")} est verrouillé, les positions d'ouverture seraient refusées à la validation. Choisissez une date postérieure au ${verrou.split("-").reverse().join("/")}, ou faites rouvrir cet arrêté par un validateur (écran Arrêtés).`,
+      };
+  }
 
   if (imp.nature === "encaissements") {
     for (const [k, brut] of imp.lignes.lignes.entries()) {

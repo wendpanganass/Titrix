@@ -271,3 +271,5 @@ details.depliant[open]>summary::before{content:"− "}
   .tab-wrap{overflow:visible}
   table.tab td,table.tab th{padding:5px 8px}
 }
+/* Formulaire de validation groupée : bouton et message alignés sur le tableau */
+.form-validation>.actions,.form-validation>.note{margin:14px 20px 18px !important}
