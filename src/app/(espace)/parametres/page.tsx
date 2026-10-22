@@ -22,7 +22,7 @@ export default async function Parametres() {
     lireParametres(),
     listesReferentiels(),
     lireUn<{ n: number; demo: boolean }>(
-      "select (select count(*)::int from instruments) as n, exists (select 1 from utilisateurs where email = 'validateur.demo@titrix.demo') as demo",
+      "select (select count(*)::int from instruments) as n, exists (select 1 from instruments where code_interne like 'DEMO-%') as demo",
     ),
   ]);
   const tout = s.peut("gerer_referentiels");

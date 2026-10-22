@@ -50,10 +50,19 @@ export async function chargerJeuDemonstration(c: PoolClient, admin: { id: string
   // 1. Deux comptes fictifs pour la validation à quatre yeux (mots de passe provisoires).
   const comptes: { email: string; motDePasse: string }[] = [];
   const creerCompte = async (email: string, nom: string, roles: string[]) => {
-    const deja = await c.query<{ id: string }>("select id from utilisateurs where lower(email) = $1", [email]);
-    if (deja.rows[0]) return deja.rows[0].id;
+    const deja = await c.query<{ id: string; actif: boolean }>("select id, actif from utilisateurs where lower(email) = $1", [email]);
+    if (deja.rows[0]?.actif) return deja.rows[0].id;
     const mdp = motDePasse();
     comptes.push({ email, motDePasse: mdp });
+    if (deja.rows[0]) {
+      // Compte fictif désactivé par un nettoyage précédent : réactivé avec un nouveau mot de passe provisoire.
+      await c.query("update utilisateurs set actif = true, roles = $2, mot_de_passe_hash = $3, doit_changer_mdp = true where id = $1", [
+        deja.rows[0].id,
+        roles,
+        await bcrypt.hash(mdp, 10),
+      ]);
+      return deja.rows[0].id;
+    }
     return id(c, "insert into utilisateurs (email, nom, roles, mot_de_passe_hash, doit_changer_mdp) values ($1,$2,$3,$4,true) returning id", [
       email,
       nom,

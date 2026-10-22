@@ -147,6 +147,8 @@ select pg_temp.verifier((select count(*) from audit where table_nom = 'operation
   'audit : auteur, ancienne et nouvelle valeur de la validation');
 
 -- 10. Toujours un administrateur actif ------------------------------------------------------
+-- (les autres administrateurs éventuels de la base sont désactivés le temps du test, annulé à la fin)
+update utilisateurs set actif = false where 'admin' = any(roles) and id <> '00000000-0000-0000-0000-00000000000a';
 select pg_temp.refuse($$update utilisateurs set actif = false where id = '00000000-0000-0000-0000-00000000000a'$$, 'au moins un administrateur');
 
 -- 11. Écriture sans identité (console) refusée pour une action sensible ----------------------

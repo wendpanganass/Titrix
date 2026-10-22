@@ -31,3 +31,9 @@ Résultat attendu : « TOUS LES TESTS DES RÈGLES SONT PASSÉS ».
 L'application se connecte avec la variable `DATABASE_URL` fournie par Neon. Ne la copiez jamais dans un
 fichier du dépôt. Pour les sauvegardes : Neon conserve un historique permettant une restauration à un instant donné
 (la durée dépend de votre offre) ; pour un test de restauration, créez une *branche* Neon à une date passée.
+
+## Outils
+
+| Fichier | Usage |
+| --- | --- |
+| `outils/vider_portefeuille.sql` | Efface tout le portefeuille (démonstration, essais d'import) avant le démarrage réel. Conserve les comptes, les paramètres et les référentiels ; retire les référentiels « Démo » et désactive les comptes fictifs. **Irréversible.** |
