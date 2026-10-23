@@ -69,7 +69,7 @@ export default async function Analyses(props: PageProps<"/analyses">) {
             {groupes.length === 0 ? <Vide>Aucune position.</Vide> : (
               <div className="tab-wrap">
                 <table className="tab">
-                  <thead><tr><th>{AXES[axe].libelle}</th><th className="d">Positions</th><th className="d">Nominal</th><th className="d">Part</th><th className="d">Grevé</th><th className="d">Disponible</th><th className="d">Coupon couru</th><th className="d">Coupon moyen</th><th className="d">Durée rés. (ans)</th></tr></thead>
+                  <thead><tr><th>{AXES[axe].libelle}</th><th className="d">Positions</th><th className="d">Nominal</th><th className="d">Part</th><th className="d">Grevé</th><th className="d">Disponible</th><th className="d" title="Intérêts courus non échus">ICNE</th><th className="d">Coupon moyen</th><th className="d">Durée rés. (ans)</th></tr></thead>
                   <tbody>
                     {groupes.map((g) => {
                       const ind = indicateurs((l) => (AXES[axe].cle(l) || "Non renseigné") === g.cle);

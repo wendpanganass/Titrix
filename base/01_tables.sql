@@ -351,7 +351,7 @@ create table if not exists encaissements (
   position_id  uuid not null references positions(id),
   echeance_id  uuid references echeances(id) on delete restrict,
   date_valeur  date not null,
-  montant      numeric(24,2) not null check (montant > 0),
+  montant      numeric(24,2) not null check (montant > 0),     -- total reçu = capital + intérêts (voir plus bas)
   nature       text not null default 'mixte' check (nature in ('capital','interet','mixte')),
   reference    text not null default '',
   commentaire  text not null default '',
@@ -363,6 +363,30 @@ create table if not exists encaissements (
   saisi_le     timestamptz not null default now()
 );
 create index if not exists encaissements_echeance on encaissements (echeance_id);
+
+-- Ventilation de chaque encaissement entre capital et intérêts (montant = capital + intérêts).
+alter table encaissements add column if not exists montant_capital numeric(24,2) not null default 0;
+alter table encaissements add column if not exists montant_interet numeric(24,2) not null default 0;
+-- Reprise des encaissements déjà saisis : les intérêts sont réputés payés en premier
+-- (dans la limite des intérêts nets de l'échéance), le solde est du capital.
+update encaissements x set
+  montant_interet = r.interet,
+  montant_capital = x.montant - r.interet
+from (
+  select x2.id,
+         case when x2.nature = 'capital' then 0
+              when x2.nature = 'interet' then x2.montant
+              else least(x2.montant, coalesce((select greatest(e.interet_brut - e.retenue, 0) from echeances e where e.id = x2.echeance_id), x2.montant))
+         end as interet
+    from encaissements x2
+) r
+where r.id = x.id and x.montant_capital + x.montant_interet <> x.montant;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'encaissements_ventilation') then
+    alter table encaissements add constraint encaissements_ventilation
+      check (montant_capital >= 0 and montant_interet >= 0 and montant = montant_capital + montant_interet);
+  end if;
+end $$;
 
 -- -----------------------------------------------------------------------------
 -- 6. Grevage (affectation en garantie)

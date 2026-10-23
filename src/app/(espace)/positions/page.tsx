@@ -78,7 +78,7 @@ export default async function Positions(props: PageProps<"/positions">) {
             <div className="tab-wrap">
               <table className="tab">
                 <thead>
-                  <tr><th>Instrument</th><th>Portefeuille</th><th>Conservateur · compte</th><th>Échéance</th><th className="d">Nominal détenu</th><th className="d">Grevé</th><th className="d">Disponible</th><th className="d">Coupon couru</th><th>Maturité</th><th>Devise</th></tr>
+                  <tr><th>Instrument</th><th>Portefeuille</th><th>Conservateur · compte</th><th>Échéance</th><th className="d">Nominal détenu</th><th className="d">Grevé</th><th className="d">Disponible</th><th className="d" title="Intérêts courus non échus">ICNE</th><th>Maturité</th><th>Devise</th></tr>
                 </thead>
                 <tbody>
                   {lignes.map((l) => (

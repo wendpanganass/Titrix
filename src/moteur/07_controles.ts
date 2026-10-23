@@ -192,7 +192,7 @@ export function controlerSituation(s: Situation, p: ParametresControles): Contro
         famille: FAMILLES_CONTROLE.RETARD,
         niveau: "erreur",
         libelle: nom,
-        detail: `Échéance du ${e.dateReglementPrevue} : ${fmt(e.reste)} ${dev} restent dus (${joursEntre(e.dateReglementPrevue, p.aujourdhui)} jours de retard).`,
+        detail: `Échéance du ${e.dateReglementPrevue} : ${fmt(e.reste)} ${dev} restent dus — capital ${fmt(Math.max(0, e.resteCapital))}, intérêts ${fmt(Math.max(0, e.resteInteret))} (${joursEntre(e.dateReglementPrevue, p.aujourdhui)} jours de retard).`,
         lien,
         montant: e.reste,
         devise: dev,

@@ -22,7 +22,7 @@ les écrans et actions utilisent `donnees`, `moteur`, `lib` et `composants`. Un 
 | `src/moteur/01_dates.ts` | Dates ISO, conventions de décompte, jours ouvrés |
 | `src/moteur/02_echeancier.ts` | Échéancier contractuel en parts du nominal (généré ou officiel) |
 | `src/moteur/03_position.ts` | Effets des opérations, échéances d'une position, coupon couru, situation à date |
-| `src/moteur/04_encaissements.ts` | Statut des échéances, reste dû |
+| `src/moteur/04_encaissements.ts` | Statut des échéances, reste dû, intérêts nets, ventilation capital / intérêts |
 | `src/moteur/05_indicateurs.ts` | Tranches de maturité, moyennes protégées, fiches des indicateurs |
 | `src/moteur/06_portefeuille.ts` | Situation complète à une date (point de calcul unique de tous les écrans) |
 | `src/moteur/07_controles.ts` | Contrôles et alertes, avec clé stable pour le suivi |

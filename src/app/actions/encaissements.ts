@@ -1,8 +1,10 @@
 "use server";
 /**
  * Encaissements et rapprochement (§6.4) : flux réellement reçus, rapprochés d'une échéance.
- * Un encaissement de capital propose l'opération d'amortissement / remboursement correspondante
- * (soumise à validation) : l'arrivée à échéance ne suffit jamais à considérer un titre remboursé.
+ * Chaque encaissement est ventilé entre CAPITAL et INTÉRÊTS (nets de retenue) : le capital reçu
+ * suit l'encours, les intérêts reçus suivent les produits. Le capital reçu propose l'opération
+ * d'amortissement / remboursement correspondante (soumise à validation) : l'arrivée à échéance
+ * ne suffit jamais à considérer un titre remboursé.
  */
 import { revalidatePath } from "next/cache";
 import { transaction } from "@/lib/db";
@@ -11,44 +13,66 @@ import { lireDate, lireNombre, lireTexte } from "@/lib/format";
 import { journaliser } from "@/donnees/journal";
 import { erreur, ok, type Retour } from "./commun";
 
+const fr = (n: number) => n.toLocaleString("fr-FR", { maximumFractionDigits: 2 });
+const arrondi2 = (n: number) => Math.round(n * 100) / 100;
+
 export async function enregistrerEncaissement(_: Retour, f: FormData): Promise<Retour> {
   try {
     const s = await exigerPermission("encaisser");
     const echeanceId = lireTexte(f.get("echeance_id"));
-    const montant = lireNombre(f.get("montant"));
+    const capital = arrondi2(lireNombre(f.get("montant_capital")) ?? 0);
+    const interet = arrondi2(lireNombre(f.get("montant_interet")) ?? 0);
     const date = lireDate(f.get("date_valeur"));
-    if (!montant || montant <= 0) throw new ErreurMetier("Le montant reçu doit être positif.");
+    if (capital < 0 || interet < 0) throw new ErreurMetier("Le capital et les intérêts reçus ne peuvent pas être négatifs.");
+    const montant = arrondi2(capital + interet);
+    if (montant <= 0) throw new ErreurMetier("Saisissez le capital reçu et/ou les intérêts reçus.");
     if (!date) throw new ErreurMetier("La date de valeur est obligatoire.");
+    const nature = capital > 0 && interet > 0 ? "mixte" : capital > 0 ? "capital" : "interet";
     const constaterCapital = lireTexte(f.get("constater_capital")) === "1";
     const message = await transaction(s.u.id, async (c) => {
-      const e = await c.query<{ position_id: string; capital_du: number; date_contractuelle: string; date_echeance: string | null; numero: number | null }>(
-        `select e.position_id, e.capital_du, e.date_contractuelle, i.date_echeance,
-                (select o.numero from operations o where o.echeance_id = e.id and o.statut not in ('rejete','annule') limit 1) as numero
+      const e = await c.query<{
+        position_id: string; capital_du: number; interet_net: number; date_contractuelle: string; date_echeance: string | null;
+        capital_recu: number; interet_recu: number; capital_constate: number;
+      }>(
+        `select e.position_id, e.capital_du, greatest(e.interet_brut - e.retenue, 0) as interet_net, e.date_contractuelle, i.date_echeance,
+                (select coalesce(sum(montant_capital), 0) from encaissements x where x.echeance_id = e.id and x.statut = 'actif') as capital_recu,
+                (select coalesce(sum(montant_interet), 0) from encaissements x where x.echeance_id = e.id and x.statut = 'actif') as interet_recu,
+                (select coalesce(sum(o.nominal), 0) from operations o where o.echeance_id = e.id and o.statut not in ('rejete','annule')) as capital_constate
            from echeances e join positions p on p.id = e.position_id join instruments i on i.id = p.instrument_id where e.id = $1`,
         [echeanceId],
       );
       if (!e.rows[0]) throw new ErreurMetier("Échéance introuvable.");
       const ech = e.rows[0];
+      const resteCapital = arrondi2(ech.capital_du - ech.capital_recu);
+      if (capital > resteCapital + 0.01)
+        throw new ErreurMetier(
+          `Le capital reçu (${fr(capital)}) dépasse le capital restant dû sur cette échéance (${fr(Math.max(0, resteCapital))}). ` +
+            "Un remboursement anticipé se saisit comme opération ; un excédent d'intérêts se saisit en intérêts.",
+        );
       await c.query(
-        `insert into encaissements (position_id, echeance_id, date_valeur, montant, nature, reference, commentaire)
-         values ($1,$2,$3,$4,$5,$6,$7)`,
-        [ech.position_id, echeanceId, date, montant, lireTexte(f.get("nature")) || "mixte", lireTexte(f.get("reference")), lireTexte(f.get("commentaire"))],
+        `insert into encaissements (position_id, echeance_id, date_valeur, montant, montant_capital, montant_interet, nature, reference, commentaire)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [ech.position_id, echeanceId, date, montant, capital, interet, nature, lireTexte(f.get("reference")), lireTexte(f.get("commentaire"))],
       );
-      let suite = "";
-      if (constaterCapital && ech.capital_du > 0) {
-        if (ech.numero) suite = ` L'amortissement est déjà saisi (opération n° ${ech.numero}).`;
+      const suite: string[] = [];
+      const tropPercu = arrondi2(ech.interet_recu + interet - ech.interet_net);
+      if (tropPercu > 0.01) suite.push(`Attention : ${fr(tropPercu)} d'intérêts reçus au-delà des intérêts nets attendus (écart à expliquer).`);
+      // Capital reçu non encore constaté par une opération : on propose l'amortissement correspondant.
+      const aConstater = arrondi2(ech.capital_recu + capital - ech.capital_constate);
+      if (constaterCapital && capital > 0) {
+        if (aConstater <= 0.01) suite.push("Le capital reçu est déjà constaté par une opération d'amortissement.");
         else {
-          const type = ech.date_contractuelle === ech.date_echeance ? "remboursement" : "amortissement";
+          const type = ech.date_contractuelle === ech.date_echeance && aConstater >= ech.capital_du - 0.01 ? "remboursement" : "amortissement";
           const r = await c.query<{ numero: number }>(
             `insert into operations (type, position_id, date_effet, nominal, echeance_id, reference, commentaire, statut)
-             values ($1,$2,$3,$4,$5,$6,'Proposée à l''enregistrement de l''encaissement','soumis') returning numero`,
-            [type, ech.position_id, ech.date_contractuelle, ech.capital_du, echeanceId, lireTexte(f.get("reference"))],
+             values ($1,$2,$3,$4,$5,$6,'Proposée à l''enregistrement de l''encaissement (capital reçu)','soumis') returning numero`,
+            [type, ech.position_id, ech.date_contractuelle, aConstater, echeanceId, lireTexte(f.get("reference"))],
           );
-          suite = ` Opération n° ${r.rows[0].numero} (${type}) soumise à validation pour constater le capital remboursé.`;
+          suite.push(`Opération n° ${r.rows[0].numero} (${type} de ${fr(aConstater)}) soumise à validation pour constater le capital remboursé.`);
         }
       }
-      await journaliser(c, s, "Encaissement enregistré", "echeance", echeanceId, { montant, date });
-      return `Encaissement de ${montant.toLocaleString("fr-FR")} enregistré.${suite}`;
+      await journaliser(c, s, "Encaissement enregistré", "echeance", echeanceId, { montant, capital, interet, date });
+      return [`Encaissement de ${fr(montant)} enregistré (capital ${fr(capital)}, intérêts ${fr(interet)}).`, ...suite].join(" ");
     });
     revalidatePath("/encaissements");
     revalidatePath("/", "layout");

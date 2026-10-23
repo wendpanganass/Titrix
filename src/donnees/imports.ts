@@ -6,6 +6,7 @@ import "server-only";
 import type { PoolClient } from "pg";
 import { normaliserCode } from "@/lib/codes";
 import type { Brut } from "@/lib/lecture-fichier";
+import { ventilerEncaissement } from "@/moteur";
 import {
   cleImport,
   divergences,
@@ -16,6 +17,39 @@ import {
   type LigneTitre,
   type NatureImport,
 } from "@/lib/import-regles";
+
+/**
+ * Montants d'une ligne d'encaissement : capital et intérêts explicites si les colonnes existent,
+ * sinon le total seul (ventilé plus tard sur l'échéance, intérêts en premier).
+ */
+function montantsEncaissement(v: (cle: string) => Brut): { total: number | null; capital: number | null; interet: number | null; erreur: string } {
+  const capital = lireNombreBrut(v("capital"));
+  const interet = lireNombreBrut(v("interet"));
+  let total = lireNombreBrut(v("montant"));
+  if ((capital ?? 0) < 0 || (interet ?? 0) < 0 || (total ?? 0) < 0) return { total, capital, interet, erreur: "Montant négatif" };
+  if (capital === null && interet === null) return { total, capital, interet, erreur: total && total > 0 ? "" : "Montant manquant ou illisible" };
+  const c = capital ?? (total !== null ? Math.round((total - (interet ?? 0)) * 100) / 100 : 0);
+  const i = interet ?? (total !== null ? Math.round((total - (capital ?? 0)) * 100) / 100 : 0);
+  if (c < 0 || i < 0) return { total, capital, interet, erreur: "Le capital ou les intérêts dépassent le montant total" };
+  const somme = Math.round((c + i) * 100) / 100;
+  if (total !== null && Math.abs(total - somme) > 0.01) return { total, capital: c, interet: i, erreur: `Montant total (${total}) différent de capital + intérêts (${somme})` };
+  total = somme;
+  return { total, capital: c, interet: i, erreur: total > 0 ? "" : "Montant nul" };
+}
+
+/** Échéance rapprochable d'un encaissement importé, avec ses restes en capital et en intérêts. */
+const SQL_ECHEANCE_RAPPROCHABLE = `
+  select e.id, e.position_id,
+         e.capital_du - coalesce((select sum(montant_capital) from encaissements x where x.echeance_id = e.id and x.statut = 'actif'), 0) as reste_capital,
+         greatest(e.interet_brut - e.retenue, 0) - coalesce((select sum(montant_interet) from encaissements x where x.echeance_id = e.id and x.statut = 'actif'), 0) as reste_interet
+    from echeances e join positions p on p.id = e.position_id join instruments i on i.id = p.instrument_id
+    join conservateurs cs on cs.id = p.conservateur_id
+   where (i.code_interne = $1 or i.isin = $1) and lower(cs.nom) = lower($2) and ($3 = '' or p.compte_conservation = $3)
+     and abs(e.date_reglement_prevue - $4::date) <= 31 and e.statut_manuel is null
+     and e.net_attendu - coalesce((select sum(montant) from encaissements x where x.echeance_id = e.id and x.statut = 'actif'), 0) > 0.005
+   order by abs(e.date_reglement_prevue - $4::date) limit 1`;
+
+type EcheanceRapprochable = { id: string; position_id: string; reste_capital: number; reste_interet: number };
 
 export interface ImportEnBase {
   id: string;
@@ -87,19 +121,28 @@ export async function analyserImport(c: PoolClient, imp: ImportEnBase): Promise<
   }
 
   if (imp.nature === "encaissements") {
+    // Un encaissement daté d'une période verrouillée serait refusé à l'import : on le dit dès l'aperçu.
+    const verrou = (await c.query<{ d: string | null }>("select to_char(date_dernier_verrou(), 'YYYY-MM-DD') as d")).rows[0]?.d ?? null;
     for (const [k, brut] of imp.lignes.lignes.entries()) {
       const v = (cle: string) => (corr[cle] === null || corr[cle] === undefined ? null : (brut[corr[cle]!] ?? null));
       const code = normaliserCode(String(v("code") ?? ""));
       const conservateur = String(v("conservateur") ?? "").trim();
       const compte = String(v("compte") ?? "").trim();
       const date = lireDateBrute(v("date_valeur"));
-      const montant = lireNombreBrut(v("montant"));
+      const m = montantsEncaissement(v);
+      const montant = m.total;
       const reference = String(v("reference") ?? "").trim();
       const numero = k + 2;
       const cle = cleImport("encaissements", [code, conservateur, compte, date, montant, reference]);
       const resume = `${code} · ${conservateur} · ${date ?? "?"} · ${montant ?? "?"}`;
-      if (!code || !conservateur || !date || !montant || montant <= 0) {
-        sortie.push({ numero, action: "quarantaine", motif: "Code, conservateur, date de valeur ou montant manquant / illisible", resume, notes: [] });
+      if (!code || !conservateur || !date || m.erreur) {
+        sortie.push({ numero, action: "quarantaine", motif: m.erreur || "Code, conservateur ou date de valeur manquant / illisible", resume, notes: [] });
+        totaux.quarantaine++;
+        continue;
+      }
+      if (verrou && date <= verrou) {
+        const fr = (d: string) => d.split("-").reverse().join("/");
+        sortie.push({ numero, action: "quarantaine", motif: `Date de valeur dans une période verrouillée (arrêté du ${fr(verrou)}) : faites rouvrir l'arrêté pour l'importer`, resume, notes: [] });
         totaux.quarantaine++;
         continue;
       }
@@ -108,22 +151,30 @@ export async function analyserImport(c: PoolClient, imp: ImportEnBase): Promise<
         totaux.doublon++;
         continue;
       }
-      const e = await c.query<{ id: string }>(
-        `select e.id from echeances e join positions p on p.id = e.position_id join instruments i on i.id = p.instrument_id
-           join conservateurs cs on cs.id = p.conservateur_id
-          where (i.code_interne = $1 or i.isin = $1) and lower(cs.nom) = lower($2) and ($3 = '' or p.compte_conservation = $3)
-            and abs(e.date_reglement_prevue - $4::date) <= 31 and e.statut_manuel is null
-            and e.net_attendu - coalesce((select sum(montant) from encaissements x where x.echeance_id = e.id and x.statut = 'actif'), 0) > 0.005
-          order by abs(e.date_reglement_prevue - $4::date) limit 1`,
-        [code, conservateur, compte, date],
-      );
-      if (!e.rows[0]) {
+      const e = await c.query<EcheanceRapprochable>(SQL_ECHEANCE_RAPPROCHABLE, [code, conservateur, compte, date]);
+      const ech = e.rows[0];
+      if (!ech) {
         sortie.push({ numero, action: "quarantaine", motif: "Aucune échéance rapprochable (position introuvable ou pas d'échéance à ±31 jours)", resume, notes: [] });
         totaux.quarantaine++;
-      } else {
-        sortie.push({ numero, action: "importer", motif: "", resume, notes: [`Rapproché de l'échéance ${e.rows[0].id.slice(0, 8)}`] });
-        totaux.importer++;
+        continue;
       }
+      const v2 = m.capital !== null ? { capital: m.capital, interet: m.interet ?? 0 } : ventilerEncaissement(montant!, ech.reste_interet);
+      if (v2.capital > Math.max(0, ech.reste_capital) + 0.01) {
+        sortie.push({ numero, action: "quarantaine", motif: `Capital reçu (${v2.capital}) supérieur au capital restant dû sur l'échéance (${Math.max(0, ech.reste_capital)})`, resume, notes: [] });
+        totaux.quarantaine++;
+        continue;
+      }
+      sortie.push({
+        numero,
+        action: "importer",
+        motif: "",
+        resume,
+        notes: [
+          `Rapproché de l'échéance ${ech.id.slice(0, 8)}`,
+          `Capital ${v2.capital} · intérêts ${v2.interet}${m.capital === null ? " (ventilation automatique : intérêts en premier)" : ""}`,
+        ],
+      });
+      totaux.importer++;
     }
     return { lignes: sortie, totaux, nouveauxInstruments: 0, nouvellesPositions: 0 };
   }
@@ -252,20 +303,20 @@ export async function executerImport(c: PoolClient, imp: ImportEnBase, utilisate
       const conservateur = String(v("conservateur") ?? "").trim();
       const compte = String(v("compte") ?? "").trim();
       const date = lireDateBrute(v("date_valeur"))!;
-      const montant = lireNombreBrut(v("montant"))!;
+      const m = montantsEncaissement(v);
+      const montant = m.total!;
       const reference = String(v("reference") ?? "").trim();
-      const e = await c.query<{ id: string; position_id: string }>(
-        `select e.id, e.position_id from echeances e join positions p on p.id = e.position_id join instruments i on i.id = p.instrument_id
-           join conservateurs cs on cs.id = p.conservateur_id
-          where (i.code_interne = $1 or i.isin = $1) and lower(cs.nom) = lower($2) and ($3 = '' or p.compte_conservation = $3)
-            and abs(e.date_reglement_prevue - $4::date) <= 31 and e.statut_manuel is null
-            and e.net_attendu - coalesce((select sum(montant) from encaissements x where x.echeance_id = e.id and x.statut = 'actif'), 0) > 0.005
-          order by abs(e.date_reglement_prevue - $4::date) limit 1`,
-        [code, conservateur, compte, date],
-      );
+      const e = await c.query<EcheanceRapprochable>(SQL_ECHEANCE_RAPPROCHABLE, [code, conservateur, compte, date]);
+      if (!e.rows[0]) {
+        await quarantaine(numero, "Aucune échéance rapprochable au moment de l'import");
+        continue;
+      }
+      const ventile = m.capital !== null ? { capital: m.capital, interet: m.interet ?? 0 } : ventilerEncaissement(montant, e.rows[0].reste_interet);
+      const nature = ventile.capital > 0 && ventile.interet > 0 ? "mixte" : ventile.capital > 0 ? "capital" : "interet";
       await c.query(
-        "insert into encaissements (position_id, echeance_id, date_valeur, montant, reference, commentaire, cle_import, import_id) values ($1,$2,$3,$4,$5,$6,$7,$8)",
-        [e.rows[0].position_id, e.rows[0].id, date, montant, reference, `Import ${imp.nom_fichier} ligne ${numero}`, cleImport("encaissements", [code, conservateur, compte, date, montant, reference]), imp.id],
+        `insert into encaissements (position_id, echeance_id, date_valeur, montant, montant_capital, montant_interet, nature, reference, commentaire, cle_import, import_id)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        [e.rows[0].position_id, e.rows[0].id, date, montant, ventile.capital, ventile.interet, nature, reference, `Import ${imp.nom_fichier} ligne ${numero}`, cleImport("encaissements", [code, conservateur, compte, date, montant, reference]), imp.id],
       );
     }
   } else {

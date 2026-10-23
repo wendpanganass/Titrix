@@ -5,7 +5,7 @@ import Link from "next/link";
 import { SelecteurDate } from "@/composants/client/Coquille";
 import { Contenu, EnTete } from "@/composants/EnTete";
 import { Badge, Barres, Carte, EnTeteImpression, Indicateur, Message, TitreZone, Vide } from "@/composants/ui";
-import { analyser } from "@/donnees/portefeuille";
+import { analyser, fluxEncaisses } from "@/donnees/portefeuille";
 import { exigerSession } from "@/lib/session";
 import { compact, dateFr, montant, moisFr, pourcent } from "@/lib/format";
 import {
@@ -33,7 +33,15 @@ export default async function TableauDeBord(props: PageProps<"/">) {
   const interets12 = flux.reduce((x, e) => x + e.interetBrut, 0);
   const echeancesDevise = situation.echeances.filter((e) => e.ligne?.instrument.devise === devise);
   const impayes = echeancesDevise.filter((e) => estImpaye(e.statut) && e.dateReglementPrevue <= date && e.reste > 0);
-  const retard = impayes.filter((e) => e.statut !== "a_encaisser").reduce((x, e) => x + e.reste, 0);
+  const enRetard = impayes.filter((e) => e.statut !== "a_encaisser");
+  const retard = enRetard.reduce((x, e) => x + e.reste, 0);
+  const retardCapital = enRetard.reduce((x, e) => x + Math.max(0, e.resteCapital), 0);
+  const retardInteret = enRetard.reduce((x, e) => x + Math.max(0, e.resteInteret), 0);
+  const echuCapital = impayes.reduce((x, e) => x + Math.max(0, e.resteCapital), 0);
+  const echuInteret = impayes.reduce((x, e) => x + Math.max(0, e.resteInteret), 0);
+  // Flux réellement encaissés depuis le 1er janvier de l'année de l'arrêté.
+  const debutAnnee = `${date.slice(0, 4)}-01-01`;
+  const encaisse = (await fluxEncaisses(s, debutAnnee, date)).find((x) => x.devise === devise) ?? { capital: 0, interet: 0, nombre: 0 };
   const prochaines = echeancesDevise
     .filter((e) => e.dateReglementPrevue >= date && e.dateReglementPrevue <= ajouterJours(date, 30) && e.statut !== "encaissee")
     .sort((a, b) => a.dateReglementPrevue.localeCompare(b.dateReglementPrevue));
@@ -93,14 +101,14 @@ export default async function TableauDeBord(props: PageProps<"/">) {
             detail={`${instruments.size} instrument(s) · ${lignes.length} position(s)`} />
           <Indicateur libelle="Tombées à 12 mois" valeur={compact(capital12 + interets12)} unite={devise} icone="echeancier"
             detail={`Capital ${compact(capital12)} · intérêts ${compact(interets12)}`} />
-          <Indicateur libelle="Coupons courus" valeur={compact(t?.couru ?? 0)} unite={devise} icone="monnaie" ton="bon"
+          <Indicateur libelle="ICNE (coupons courus)" valeur={compact(t?.couru ?? 0)} unite={devise} icone="monnaie" ton="bon"
             detail={`Coupon moyen pondéré ${pourcent(coupon)}`} />
           <Indicateur libelle="Nominal grevé" valeur={compact(t?.greve ?? 0)} unite={devise} icone="grevage" ton="alerte"
             detail={`Disponible ${compact(t?.disponible ?? 0)} ${devise}`} />
           <Indicateur libelle="Échéances à 30 jours" valeur={prochaines.length} icone="horloge"
             detail={`${compact(prochaines.reduce((x, e) => x + e.netAttendu, 0))} ${devise} attendus`} />
           <Indicateur libelle="Montants en retard" valeur={compact(retard)} unite={devise} icone="encaissements" ton={retard > 0 ? "erreur" : "bon"}
-            detail={`${impayes.length} échéance(s) non soldée(s)`} />
+            detail={`Capital ${compact(retardCapital)} · intérêts ${compact(retardInteret)}`} />
           <Indicateur libelle="Capital échu à recouvrer" valeur={compact(t?.echu ?? 0)} unite={devise} icone="alerte"
             ton={(t?.echu ?? 0) > 0 ? "erreur" : "bon"} detail="Sans remboursement constaté" />
           <Indicateur libelle="Anomalies non résolues" valeur={ouvertes.length} icone="controles" ton={ouvertes.some((c) => c.niveau === "bloquant") ? "erreur" : ouvertes.length ? "alerte" : "bon"}
@@ -142,6 +150,27 @@ export default async function TableauDeBord(props: PageProps<"/">) {
                 ))}
               </div>
             )}
+          </Carte>
+        </div>
+
+        <TitreZone>Capital et intérêts</TitreZone>
+        <div className="rangee deux">
+          <Carte titre={`Encaissé depuis le ${dateFr(debutAnnee)}`} sousTitre={`Flux reçus jusqu'au ${dateFr(date)}, ventilés à la saisie`}
+            action={<Link className="btn-sec btn-mini" href="/encaissements?vue=encaissees">Détail →</Link>}>
+            <dl className="liste-def">
+              <dt>Capital remboursé</dt><dd>{montant(encaisse.capital)} {devise}</dd>
+              <dt>Intérêts reçus (nets)</dt><dd>{montant(encaisse.interet)} {devise}</dd>
+              <dt>Total encaissé</dt><dd><b>{montant(encaisse.capital + encaisse.interet)} {devise}</b></dd>
+              <dt>Nombre d&apos;encaissements</dt><dd>{encaisse.nombre}</dd>
+            </dl>
+          </Carte>
+          <Carte titre={`Restant à recevoir au ${dateFr(date)}`} sousTitre="Échu non reçu, intérêts courus et encours en capital">
+            <dl className="liste-def">
+              <dt>Encours en capital</dt><dd>{montant(t?.nominal ?? 0)} {devise}</dd>
+              <dt>Capital échu non reçu</dt><dd className={echuCapital > 0.01 ? "neg" : ""}>{montant(echuCapital)} {devise}</dd>
+              <dt>Intérêts échus non reçus</dt><dd className={echuInteret > 0.01 ? "neg" : ""}>{montant(echuInteret)} {devise}</dd>
+              <dt>ICNE (intérêts courus non échus)</dt><dd>{montant(t?.couru ?? 0)} {devise}</dd>
+            </dl>
           </Carte>
         </div>
 

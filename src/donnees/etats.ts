@@ -9,7 +9,7 @@ import type { Session } from "@/lib/session";
 import type { Colonne, Ligne } from "@/lib/excel";
 import { analyser } from "./portefeuille";
 import type { Photographie } from "./arretes";
-import { anneeDe, fluxProjetes, LIBELLES_NIVEAU, LIBELLES_OPERATION, LIBELLES_STATUT_ECHEANCE, moisDe, type TypeOperation } from "@/moteur";
+import { anneeDe, fluxProjetes, interetNet, LIBELLES_NIVEAU, LIBELLES_OPERATION, LIBELLES_STATUT_ECHEANCE, moisDe, type TypeOperation } from "@/moteur";
 
 export const ETATS = {
   inventaire: "Inventaire détaillé du portefeuille",
@@ -54,7 +54,7 @@ const COLS_POSITION: Colonne[] = [
   { titre: "Taux coupon", cle: "taux", format: "pourcent", largeur: 10 },
   { titre: "Nominal détenu", cle: "nominal", format: "montant", total: true },
   { titre: "Capital échu non remboursé", cle: "echu", format: "montant", total: true },
-  { titre: "Coupon couru", cle: "couru", format: "montant", total: true },
+  { titre: "ICNE (coupon couru)", cle: "couru", format: "montant", total: true },
   { titre: "Nominal grevé", cle: "greve", format: "montant", total: true },
   { titre: "Nominal disponible", cle: "disponible", format: "montant", total: true },
   { titre: "Tranche de maturité", cle: "tranche", largeur: 16 },
@@ -243,18 +243,35 @@ export async function construireEtat(s: Session, nom: NomEtat, p: { date?: strin
     }
     case "encaissements": {
       const ech = a.situation.echeances.filter((e) => e.ligne && (!devise || e.ligne.instrument.devise === devise) && e.dateReglementPrevue <= a.date);
+      const debutAnnee = `${a.date.slice(0, 4)}-01-01`;
+      const recus = await lire<Ligne>(
+        `select x.date_valeur as date, i.code_interne as code, i.libelle, c.nom as conservateur, e.date_contractuelle as echeance,
+                x.montant_capital as capital, x.montant_interet as interet, x.montant as total, x.reference, i.devise_code as devise
+           from encaissements x join positions p on p.id = x.position_id join instruments i on i.id = p.instrument_id
+           join conservateurs c on c.id = p.conservateur_id left join echeances e on e.id = x.echeance_id
+          where x.statut = 'actif' and x.date_valeur between $3 and $4
+            and (cardinality($1::uuid[]) = 0 or p.portefeuille_id = any($1::uuid[])) and ($2 = '' or i.devise_code = $2)
+          order by x.date_valeur, i.code_interne`,
+        [s.u.portefeuilles, devise, debutAnnee, a.date],
+      );
       return {
         ...base,
         titre: ETATS.encaissements,
         feuilles: [
           {
             nom: "Échéances échues",
-            contenu: `Échéances échues au ${a.date} : attendu, reçu, reste dû`,
+            contenu: `Échéances échues au ${a.date} : attendu, reçu et reste dû, en capital et en intérêts nets`,
             colonnes: [
               { titre: "Règlement prévu", cle: "date", format: "date", largeur: 12 },
               { titre: "Code", cle: "code", largeur: 16 },
               { titre: "Libellé", cle: "libelle", largeur: 30 },
               { titre: "Conservateur", cle: "conservateur" },
+              { titre: "Capital attendu", cle: "capital_attendu", format: "montant", total: true },
+              { titre: "Capital reçu", cle: "capital_recu", format: "montant", total: true },
+              { titre: "Reste en capital", cle: "reste_capital", format: "montant", total: true },
+              { titre: "Intérêts nets attendus", cle: "interet_attendu", format: "montant", total: true },
+              { titre: "Intérêts reçus", cle: "interet_recu", format: "montant", total: true },
+              { titre: "Reste en intérêts", cle: "reste_interet", format: "montant", total: true },
               { titre: "Net attendu", cle: "attendu", format: "montant", total: true },
               { titre: "Reçu", cle: "recu", format: "montant", total: true },
               { titre: "Reste dû", cle: "reste", format: "montant", total: true },
@@ -267,6 +284,12 @@ export async function construireEtat(s: Session, nom: NomEtat, p: { date?: strin
               code: e.ligne?.instrument.code,
               libelle: e.ligne?.instrument.libelle,
               conservateur: e.ligne?.position.conservateur,
+              capital_attendu: e.capitalDu,
+              capital_recu: e.capitalRecu,
+              reste_capital: e.resteCapital,
+              interet_attendu: interetNet(e),
+              interet_recu: e.interetRecu,
+              reste_interet: e.resteInteret,
               attendu: e.netAttendu,
               recu: e.montantRecu,
               reste: e.reste,
@@ -274,6 +297,23 @@ export async function construireEtat(s: Session, nom: NomEtat, p: { date?: strin
               explication: e.explicationEcart,
               devise: e.ligne?.instrument.devise,
             })),
+          },
+          {
+            nom: "Encaissements reçus",
+            contenu: `Flux reçus du ${debutAnnee} au ${a.date}, ventilés entre capital et intérêts`,
+            colonnes: [
+              { titre: "Date de valeur", cle: "date", format: "date", largeur: 12 },
+              { titre: "Code", cle: "code", largeur: 16 },
+              { titre: "Libellé", cle: "libelle", largeur: 30 },
+              { titre: "Conservateur", cle: "conservateur" },
+              { titre: "Échéance", cle: "echeance", format: "date", largeur: 12 },
+              { titre: "Capital", cle: "capital", format: "montant", total: true },
+              { titre: "Intérêts", cle: "interet", format: "montant", total: true },
+              { titre: "Total", cle: "total", format: "montant", total: true },
+              { titre: "Référence", cle: "reference", largeur: 22 },
+              { titre: "Devise", cle: "devise", largeur: 8 },
+            ],
+            lignes: recus,
           },
         ],
       };

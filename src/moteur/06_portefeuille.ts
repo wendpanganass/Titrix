@@ -7,7 +7,7 @@
 import { ajouterJours, type DateIso } from "./01_dates";
 import type { InstrumentCalc, LigneOfficielle } from "./02_echeancier";
 import { arrondi2, situationPosition, type EcheanceCalculee, type OperationCalc } from "./03_position";
-import { resteDu, statutEcheance, type StatutEcheance } from "./04_encaissements";
+import { interetNet, resteDu, statutEcheance, type StatutEcheance } from "./04_encaissements";
 import { trancheMaturite, type Tranche, TRANCHES_DEFAUT } from "./05_indicateurs";
 
 export interface InstrumentDonnees extends InstrumentCalc {
@@ -50,6 +50,9 @@ export interface EcheanceDonnees {
   statutManuel: "litige" | "annulee" | "remplacee" | null;
   explicationEcart: string | null;
   montantRecu: number;
+  /** Part du montant reçu imputée sur le capital, et sur les intérêts (nets). */
+  capitalRecu: number;
+  interetRecu: number;
 }
 
 export interface GrevageDonnees {
@@ -93,6 +96,9 @@ export interface LignePosition {
 export interface EcheanceSuivie extends EcheanceDonnees {
   statut: StatutEcheance;
   reste: number;
+  /** Capital dû non encore reçu, intérêts nets dus non encore reçus (négatif = trop-perçu). */
+  resteCapital: number;
+  resteInteret: number;
   ligne: LignePosition | undefined;
 }
 
@@ -161,7 +167,15 @@ export function calculerSituation(
   const tol = options.toleranceJours ?? 5;
   const echeances = d.echeances.map((e) => {
     const statut = statutEcheance(e, aujourdhui, tol);
-    return { ...e, statut, reste: statut === "annulee" || statut === "remplacee" ? 0 : resteDu(e), ligne: parPosition.get(e.positionId) };
+    const neutre = statut === "annulee" || statut === "remplacee";
+    return {
+      ...e,
+      statut,
+      reste: neutre ? 0 : resteDu(e),
+      resteCapital: neutre ? 0 : arrondi2(e.capitalDu - e.capitalRecu),
+      resteInteret: neutre ? 0 : arrondi2(interetNet(e) - e.interetRecu),
+      ligne: parPosition.get(e.positionId),
+    };
   });
 
   return { date, lignes, echeances };

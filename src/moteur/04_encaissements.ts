@@ -67,3 +67,17 @@ export function resteDu(e: { netAttendu: number; montantRecu: number }): number 
 export function estImpaye(s: StatutEcheance): boolean {
   return s === "en_retard" || s === "partielle" || s === "litige" || s === "a_encaisser";
 }
+
+/** Intérêts nets attendus d'une échéance (après retenue à la source). */
+export function interetNet(e: { interetBrut: number; retenue: number }): number {
+  return arrondi2(Math.max(0, e.interetBrut - e.retenue));
+}
+
+/**
+ * Ventilation d'un montant reçu sans précision : les intérêts sont réputés payés en premier,
+ * dans la limite des intérêts restant dus ; le solde est imputé sur le capital.
+ */
+export function ventilerEncaissement(montant: number, resteInterets: number): { capital: number; interet: number } {
+  const interet = arrondi2(Math.min(Math.max(0, montant), Math.max(0, resteInterets)));
+  return { interet, capital: arrondi2(Math.max(0, montant) - interet) };
+}

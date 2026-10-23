@@ -153,13 +153,18 @@ export async function chargerDonnees(s: Session, date: string): Promise<DonneesP
       statut_manuel: "litige" | "annulee" | "remplacee" | null;
       explication_ecart: string | null;
       recu: number;
+      capital_recu: number;
+      interet_recu: number;
     }>(
+      // Seuls les encaissements reçus au plus tard à la date d'arrêté sont comptés (situation historique exacte).
       `select e.id, e.position_id, e.date_contractuelle, e.date_reglement_prevue, e.capital_du, e.interet_brut, e.retenue,
               e.net_attendu, e.statut_manuel, e.explication_ecart,
-              coalesce((select sum(montant) from encaissements x where x.echeance_id = e.id and x.statut = 'actif'), 0) as recu
+              coalesce(x.recu, 0) as recu, coalesce(x.capital, 0) as capital_recu, coalesce(x.interet, 0) as interet_recu
          from echeances e join positions p on p.id = e.position_id
+         left join (select echeance_id, sum(montant) as recu, sum(montant_capital) as capital, sum(montant_interet) as interet
+                      from encaissements where statut = 'actif' and date_valeur <= $2 group by echeance_id) x on x.echeance_id = e.id
         where (cardinality($1::uuid[]) = 0 or p.portefeuille_id = any($1::uuid[]))`,
-      [pf],
+      [pf, date],
     ),
     lire<{
       id: string;
@@ -231,6 +236,8 @@ export async function chargerDonnees(s: Session, date: string): Promise<DonneesP
       statutManuel: e.statut_manuel,
       explicationEcart: e.explication_ecart,
       montantRecu: e.recu,
+      capitalRecu: e.capital_recu,
+      interetRecu: e.interet_recu,
     })),
     grevages: grevages.map((g) => ({
       id: g.id,
@@ -279,4 +286,24 @@ export async function analyser(s: Session, date?: string | null): Promise<Analys
     limiteConcentration: parametres.limiteConcentration,
   });
   return { situation, controles, parametres, date: d, aujourdhui: jour };
+}
+
+export interface FluxEncaisses {
+  devise: string;
+  capital: number;
+  interet: number;
+  nombre: number;
+}
+
+/** Capital et intérêts effectivement encaissés entre deux dates (incluses), par devise. */
+export async function fluxEncaisses(s: Session, du: string, au: string): Promise<FluxEncaisses[]> {
+  return lire<FluxEncaisses>(
+    `select i.devise_code as devise, coalesce(sum(x.montant_capital), 0) as capital, coalesce(sum(x.montant_interet), 0) as interet,
+            count(*)::int as nombre
+       from encaissements x join positions p on p.id = x.position_id join instruments i on i.id = p.instrument_id
+      where x.statut = 'actif' and x.date_valeur between $2 and $3
+        and (cardinality($1::uuid[]) = 0 or p.portefeuille_id = any($1::uuid[]))
+      group by i.devise_code`,
+    [pfAutorises(s), du, au],
+  );
 }

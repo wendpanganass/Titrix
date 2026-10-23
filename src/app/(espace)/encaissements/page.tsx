@@ -1,5 +1,7 @@
 /**
  * Encaissements : échéances attendues, reçues, partielles, en retard, en litige ; saisie et rapprochement.
+ * Chaque flux est ventilé entre capital et intérêts nets : synthèse par devise de l'encours en capital,
+ * du capital et des intérêts encaissés, des montants échus non reçus et des ICNE.
  */
 import Link from "next/link";
 import { BoutonAction, Formulaire } from "@/composants/client/Formulaire";
@@ -7,11 +9,11 @@ import { Contenu, EnTete } from "@/composants/EnTete";
 import { StatutEcheanceBadge } from "@/composants/Statuts";
 import { Carte, Champ, Indicateur, Message, Vide } from "@/composants/ui";
 import { annulerEncaissement, enregistrerEncaissement, qualifierEcheance } from "@/app/actions/encaissements";
-import { analyser } from "@/donnees/portefeuille";
+import { analyser, fluxEncaisses } from "@/donnees/portefeuille";
 import { lire } from "@/lib/db";
 import { exigerSession } from "@/lib/session";
 import { compact, dateFr, dateHeureFr, montant } from "@/lib/format";
-import { ajouterJours, joursEntre, type EcheanceSuivie } from "@/moteur";
+import { ajouterJours, estImpaye, interetNet, joursEntre, type EcheanceSuivie } from "@/moteur";
 
 const VUES = {
   a_traiter: "À traiter",
@@ -41,7 +43,7 @@ export default async function Encaissements(props: PageProps<"/encaissements">) 
     .sort((x, y) => (vue === "encaissees" ? y.dateReglementPrevue.localeCompare(x.dateReglementPrevue) : x.dateReglementPrevue.localeCompare(y.dateReglementPrevue)));
   const selection = val("echeance") ? a.situation.echeances.find((e) => e.id === val("echeance")) : undefined;
   const encaissements = selection
-    ? await lire<{ id: string; date_valeur: string; montant: number; nature: string; reference: string; commentaire: string; statut: string; motif_annulation: string | null; saisi_par: string | null; saisi_le: string }>(
+    ? await lire<{ id: string; date_valeur: string; montant: number; montant_capital: number; montant_interet: number; nature: string; reference: string; commentaire: string; statut: string; motif_annulation: string | null; saisi_par: string | null; saisi_le: string }>(
         "select x.*, u.nom as saisi_par from encaissements x left join utilisateurs u on u.id = x.saisi_par where echeance_id = $1 order by date_valeur",
         [selection.id],
       )
@@ -50,6 +52,36 @@ export default async function Encaissements(props: PageProps<"/encaissements">) 
   const litiges = a.situation.echeances.filter((e) => e.statut === "litige");
   const aEncaisser = a.situation.echeances.filter((e) => e.statut === "a_encaisser");
   const monoDevise = new Set(a.situation.echeances.map((e) => e.ligne?.instrument.devise)).size <= 1;
+
+  // Synthèse capital / intérêts par devise (les devises ne sont jamais additionnées).
+  const debutAnnee = `${jour.slice(0, 4)}-01-01`;
+  const flux = await fluxEncaisses(s, debutAnnee, jour);
+  type Synthese = { devise: string; encours: number; icne: number; capitalRecu: number; interetRecu: number; capitalEchu: number; interetEchu: number; encaissements: number };
+  const synthese = new Map<string, Synthese>();
+  const ligneDevise = (d: string) => {
+    const x = synthese.get(d) ?? { devise: d, encours: 0, icne: 0, capitalRecu: 0, interetRecu: 0, capitalEchu: 0, interetEchu: 0, encaissements: 0 };
+    synthese.set(d, x);
+    return x;
+  };
+  for (const l of a.situation.lignes) {
+    const x = ligneDevise(l.instrument.devise);
+    x.encours += l.nominal;
+    x.icne += l.couponCouru;
+  }
+  for (const e of a.situation.echeances)
+    if (e.ligne && estImpaye(e.statut) && e.dateReglementPrevue <= jour) {
+      const x = ligneDevise(e.ligne.instrument.devise);
+      x.capitalEchu += Math.max(0, e.resteCapital);
+      x.interetEchu += Math.max(0, e.resteInteret);
+    }
+  for (const f of flux) {
+    const x = ligneDevise(f.devise);
+    x.capitalRecu += f.capital;
+    x.interetRecu += f.interet;
+    x.encaissements += f.nombre;
+  }
+  const syntheses = [...synthese.values()].sort((x, y) => y.encours - x.encours);
+  const une = syntheses.length === 1 ? syntheses[0] : null;
 
   return (
     <>
@@ -61,6 +93,36 @@ export default async function Encaissements(props: PageProps<"/encaissements">) 
           <Indicateur libelle="En litige" valeur={litiges.length} icone="controles" ton={litiges.length ? "erreur" : "bon"} detail={monoDevise ? `${compact(litiges.reduce((t, e) => t + e.reste, 0))} en jeu` : "Plusieurs devises"} />
           <Indicateur libelle="Encaissées (toutes dates)" valeur={a.situation.echeances.filter((e) => e.statut === "encaissee").length} icone="coche" ton="bon" detail="Échéances soldées" />
         </div>
+        {une && (
+          <div className="grid-kpi">
+            <Indicateur libelle="Capital encaissé (année)" valeur={compact(une.capitalRecu)} unite={une.devise} icone="monnaie" ton="info" detail={`Encours en capital : ${compact(une.encours)}`} />
+            <Indicateur libelle="Intérêts encaissés (année)" valeur={compact(une.interetRecu)} unite={une.devise} icone="encaissements" ton="bon" detail={`${une.encaissements} encaissement(s) depuis le ${dateFr(debutAnnee)}`} />
+            <Indicateur libelle="Échu non reçu" valeur={compact(une.capitalEchu + une.interetEchu)} unite={une.devise} icone="alerte" ton={une.capitalEchu + une.interetEchu > 0.01 ? "erreur" : "bon"} detail={`Capital ${compact(une.capitalEchu)} · intérêts ${compact(une.interetEchu)}`} />
+            <Indicateur libelle="ICNE (coupons courus)" valeur={compact(une.icne)} unite={une.devise} icone="horloge" ton="info" detail={`Intérêts courus non échus au ${dateFr(jour)}`} />
+          </div>
+        )}
+        {syntheses.length > 1 && (
+          <Carte titre="Capital et intérêts par devise" sousTitre={`Encaissements depuis le ${dateFr(debutAnnee)} · échu non reçu et ICNE au ${dateFr(jour)}`} flush>
+            <div className="tab-wrap">
+              <table className="tab">
+                <thead><tr><th>Devise</th><th className="d">Encours en capital</th><th className="d">Capital encaissé</th><th className="d">Intérêts encaissés</th><th className="d">Capital échu non reçu</th><th className="d">Intérêts échus non reçus</th><th className="d">ICNE</th></tr></thead>
+                <tbody>
+                  {syntheses.map((x) => (
+                    <tr key={x.devise}>
+                      <td><b>{x.devise}</b></td>
+                      <td className="d">{montant(x.encours)}</td>
+                      <td className="d">{montant(x.capitalRecu)}</td>
+                      <td className="d">{montant(x.interetRecu)}</td>
+                      <td className={`d ${x.capitalEchu > 0.01 ? "neg" : ""}`}>{montant(x.capitalEchu)}</td>
+                      <td className={`d ${x.interetEchu > 0.01 ? "neg" : ""}`}>{montant(x.interetEchu)}</td>
+                      <td className="d">{montant(x.icne)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Carte>
+        )}
 
         {selection && selection.ligne && (
           <Carte
@@ -72,23 +134,30 @@ export default async function Encaissements(props: PageProps<"/encaissements">) 
               <div>
                 <dl className="liste-def">
                   <dt>Capital dû</dt><dd>{montant(selection.capitalDu, 2)}</dd>
+                  <dt>Capital reçu</dt><dd>{montant(selection.capitalRecu, 2)}</dd>
+                  <dt>Reste en capital</dt><dd className={selection.resteCapital > 0.01 ? "neg" : ""}>{montant(selection.resteCapital, 2)}</dd>
                   <dt>Intérêts bruts</dt><dd>{montant(selection.interetBrut, 2)}</dd>
                   <dt>Retenue</dt><dd>{montant(selection.retenue, 2)}</dd>
-                  <dt>Net attendu</dt><dd><b>{montant(selection.netAttendu, 2)}</b></dd>
-                  <dt>Reçu</dt><dd>{montant(selection.montantRecu, 2)}</dd>
-                  <dt>Reste dû</dt><dd className={selection.reste > 0.01 ? "neg" : ""}>{montant(selection.reste, 2)}</dd>
+                  <dt>Intérêts nets attendus</dt><dd>{montant(interetNet(selection), 2)}</dd>
+                  <dt>Intérêts reçus</dt><dd>{montant(selection.interetRecu, 2)}</dd>
+                  <dt>Reste en intérêts</dt><dd className={selection.resteInteret > 0.01 ? "neg" : ""}>{montant(selection.resteInteret, 2)}{selection.resteInteret < -0.01 && <span className="petit"> (trop-perçu)</span>}</dd>
+                  <dt>Net attendu (total)</dt><dd><b>{montant(selection.netAttendu, 2)}</b></dd>
+                  <dt>Reçu (total)</dt><dd>{montant(selection.montantRecu, 2)}</dd>
+                  <dt>Reste dû (total)</dt><dd className={selection.reste > 0.01 ? "neg" : ""}>{montant(selection.reste, 2)}</dd>
                   <dt>Statut</dt><dd><StatutEcheanceBadge s={selection.statut} /></dd>
                   <dt>Explication d&apos;écart</dt><dd>{selection.explicationEcart ?? "—"}</dd>
                 </dl>
                 <h4 style={{ margin: "18px 0 8px", fontSize: 13 }}>Encaissements rapprochés</h4>
                 {encaissements.length === 0 ? <p className="petit mut">Aucun encaissement.</p> : (
                   <table className="tab" style={{ margin: "0 -20px", width: "calc(100% + 40px)" }}>
-                    <thead><tr><th>Date de valeur</th><th className="d">Montant</th><th>Référence</th><th></th></tr></thead>
+                    <thead><tr><th>Date de valeur</th><th className="d">Capital</th><th className="d">Intérêts</th><th className="d">Total</th><th>Référence</th><th></th></tr></thead>
                     <tbody>
                       {encaissements.map((x) => (
                         <tr key={x.id} className={x.statut === "annule" ? "annule" : ""}>
                           <td className="nowrap">{dateFr(x.date_valeur)}<div className="petit mut">{x.saisi_par}, {dateHeureFr(x.saisi_le)}</div></td>
-                          <td className="d">{montant(x.montant, 2)}</td>
+                          <td className="d">{montant(x.montant_capital, 2)}</td>
+                          <td className="d">{montant(x.montant_interet, 2)}</td>
+                          <td className="d"><b>{montant(x.montant, 2)}</b></td>
                           <td className="petit">{x.reference || "—"}{x.motif_annulation && <div>Annulé : {x.motif_annulation}</div>}</td>
                           <td>{x.statut === "actif" && s.peut("encaisser") && <BoutonAction action={annulerEncaissement} champs={{ id: x.id }} libelle="Annuler" classe="btn-danger btn-mini" motif="Motif de l'annulation :" />}</td>
                         </tr>
@@ -103,15 +172,14 @@ export default async function Encaissements(props: PageProps<"/encaissements">) 
                     <input type="hidden" name="echeance_id" value={selection.id} />
                     <div className="form-grille">
                       <Champ libelle="Date de valeur" obligatoire><input className="champ" type="date" name="date_valeur" defaultValue={selection.dateReglementPrevue <= jour ? selection.dateReglementPrevue : jour} required /></Champ>
-                      <Champ libelle="Montant reçu" obligatoire><input className="champ" name="montant" inputMode="decimal" defaultValue={selection.reste > 0 ? selection.reste : ""} required /></Champ>
-                      <Champ libelle="Nature">
-                        <select className="champ" name="nature" defaultValue={selection.capitalDu > 0 ? "mixte" : "interet"}><option value="mixte">Capital et intérêts</option><option value="interet">Intérêts</option><option value="capital">Capital</option></select>
-                      </Champ>
                       <Champ libelle="Référence (avis de crédit…)"><input className="champ" name="reference" /></Champ>
+                      <Champ libelle="Capital reçu" aide={`Reste en capital : ${montant(Math.max(0, selection.resteCapital), 2)}`}><input className="champ" name="montant_capital" inputMode="decimal" defaultValue={selection.resteCapital > 0.005 ? selection.resteCapital : 0} /></Champ>
+                      <Champ libelle="Intérêts reçus (nets)" aide={`Reste en intérêts : ${montant(Math.max(0, selection.resteInteret), 2)}`}><input className="champ" name="montant_interet" inputMode="decimal" defaultValue={selection.resteInteret > 0.005 ? selection.resteInteret : 0} /></Champ>
                       <Champ libelle="Commentaire" className="plein"><input className="champ" name="commentaire" /></Champ>
                     </div>
+                    <p className="petit mut" style={{ margin: "6px 0 0" }}>Montant total reçu = capital + intérêts. Saisissez 0 dans la case qui ne concerne pas ce flux.</p>
                     {selection.capitalDu > 0 && (
-                      <label className="case" style={{ marginTop: 8 }}><input type="checkbox" name="constater_capital" value="1" defaultChecked /> Proposer l&apos;opération d&apos;amortissement de {montant(selection.capitalDu)} (à valider)</label>
+                      <label className="case" style={{ marginTop: 8 }}><input type="checkbox" name="constater_capital" value="1" defaultChecked /> Proposer l&apos;opération d&apos;amortissement du capital reçu (à valider)</label>
                     )}
                   </Formulaire>
                   <details className="depliant" style={{ marginTop: 18 }}>
@@ -151,17 +219,23 @@ export default async function Encaissements(props: PageProps<"/encaissements">) 
           {lignes.length === 0 ? <Vide>Rien à afficher.</Vide> : (
             <div className="tab-wrap">
               <table className="tab">
-                <thead><tr><th>Règlement prévu</th><th>Instrument</th><th>Conservateur</th><th className="d">Net attendu</th><th className="d">Reçu</th><th className="d">Reste dû</th><th>Retard</th><th>Statut</th></tr></thead>
+                <thead><tr><th>Règlement prévu</th><th>Instrument · conservateur</th><th className="d">Capital attendu</th><th className="d">Capital reçu</th><th className="d">Intérêts nets attendus</th><th className="d">Intérêts reçus</th><th className="d">Reste dû</th><th>Statut</th></tr></thead>
                 <tbody>
                   {lignes.slice(0, 400).map((e) => (
                     <tr key={e.id}>
-                      <td className="nowrap"><Link href={`/encaissements?vue=${vue}&echeance=${e.id}`}>{dateFr(e.dateReglementPrevue)}</Link></td>
-                      <td><Link href={`/positions/${e.positionId}`}>{e.ligne?.instrument.code}</Link><div className="petit mut">{e.ligne?.instrument.libelle}</div></td>
-                      <td>{e.ligne?.position.conservateur}</td>
-                      <td className="d">{montant(e.netAttendu)} <span className="petit mut">{e.ligne?.instrument.devise}</span></td>
-                      <td className="d">{montant(e.montantRecu)}</td>
-                      <td className={`d ${e.reste > 0.01 && e.dateReglementPrevue < jour ? "neg" : ""}`}>{montant(e.reste)}</td>
-                      <td className="petit">{e.dateReglementPrevue < jour && e.reste > 0.01 ? `${joursEntre(e.dateReglementPrevue, jour)} j` : "—"}</td>
+                      <td className="nowrap">
+                        <Link href={`/encaissements?vue=${vue}&echeance=${e.id}`}>{dateFr(e.dateReglementPrevue)}</Link>
+                        {e.dateReglementPrevue < jour && e.reste > 0.01 && <div className="petit neg">{joursEntre(e.dateReglementPrevue, jour)} j de retard</div>}
+                      </td>
+                      <td><Link href={`/positions/${e.positionId}`}>{e.ligne?.instrument.code}</Link> <span className="petit mut">{e.ligne?.instrument.devise}</span><div className="petit mut">{e.ligne?.position.conservateur}</div></td>
+                      <td className="d">{montant(e.capitalDu)}</td>
+                      <td className="d">{montant(e.capitalRecu)}</td>
+                      <td className="d">{montant(interetNet(e))}</td>
+                      <td className="d">{montant(e.interetRecu)}</td>
+                      <td className={`d ${e.reste > 0.01 && e.dateReglementPrevue < jour ? "neg" : ""}`}>
+                        {montant(e.reste)}
+                        {e.reste > 0.01 && e.resteCapital > 0.01 && e.resteInteret > 0.01 && <div className="petit mut nowrap">cap. {compact(e.resteCapital)} · int. {compact(e.resteInteret)}</div>}
+                      </td>
                       <td><StatutEcheanceBadge s={e.statut} /></td>
                     </tr>
                   ))}

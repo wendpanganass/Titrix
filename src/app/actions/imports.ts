@@ -70,6 +70,8 @@ export async function enregistrerCorrespondance(_: Retour, f: FormData): Promise
     }
     const manquants = CHAMPS[imp.nature].filter((c) => c.obligatoire && colonnes[c.cle] === null).map((c) => c.libelle);
     if (manquants.length) throw new ErreurMetier(`Associez une colonne aux champs obligatoires : ${manquants.join(", ")}.`);
+    if (imp.nature === "encaissements" && colonnes.montant === null && colonnes.capital === null && colonnes.interet === null)
+      throw new ErreurMetier("Associez au moins une colonne de montant : « Montant total reçu », « Dont capital » ou « Dont intérêts ».");
     const correspondance = {
       colonnes,
       dateReprise: lireDate(f.get("date_reprise")) ?? "",

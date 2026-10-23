@@ -11,10 +11,12 @@ import {
   echeancesPosition,
   echeancierContractuel,
   fractionAnnee,
+  interetNet,
   jourOuvreSuivant,
   situationPosition,
   statutEcheance,
   trancheMaturite,
+  ventilerEncaissement,
   type DonneesPortefeuille,
   type InstrumentCalc,
   type InstrumentDonnees,
@@ -190,6 +192,38 @@ describe("Recette — encaissement partiel", () => {
     expect(statutEcheance({ ...e, montantRecu: 0 }, "2025-04-01", 5)).toBe("en_retard");
     expect(statutEcheance({ ...e, montantRecu: 0 }, "2025-03-20", 5)).toBe("a_encaisser");
     expect(statutEcheance({ ...e, montantRecu: 65_000 }, "2025-04-01", 5)).toBe("encaissee");
+  });
+});
+
+describe("Encaissements — ventilation capital / intérêts", () => {
+  it("calcule les intérêts nets après retenue", () => {
+    expect(interetNet({ interetBrut: 30_000, retenue: 1_800 })).toBe(28_200);
+    expect(interetNet({ interetBrut: 0, retenue: 0 })).toBe(0);
+  });
+  it("impute un montant global sur les intérêts d'abord, le solde sur le capital", () => {
+    expect(ventilerEncaissement(228_200, 28_200)).toEqual({ interet: 28_200, capital: 200_000 });
+    expect(ventilerEncaissement(10_000, 28_200)).toEqual({ interet: 10_000, capital: 0 });
+    expect(ventilerEncaissement(50_000, 0)).toEqual({ interet: 0, capital: 50_000 });
+  });
+  it("suit séparément le reste dû en capital et en intérêts", () => {
+    const d: DonneesPortefeuille = {
+      instruments: [],
+      positions: [],
+      operations: [],
+      grevages: [],
+      echeances: [
+        {
+          id: "E1", positionId: "P1", dateContractuelle: "2026-05-20", dateReglementPrevue: "2026-05-20",
+          capitalDu: 200_000, interetBrut: 30_000, retenue: 1_800, netAttendu: 228_200,
+          statutManuel: null, explicationEcart: null, montantRecu: 218_200, capitalRecu: 200_000, interetRecu: 18_200,
+        },
+      ],
+    };
+    const e = calculerSituation(d, "2026-06-30").echeances[0];
+    expect(e.statut).toBe("partielle");
+    expect(e.reste).toBe(10_000);
+    expect(e.resteCapital).toBe(0);
+    expect(e.resteInteret).toBe(10_000);
   });
 });
 

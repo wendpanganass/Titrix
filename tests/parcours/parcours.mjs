@@ -215,9 +215,16 @@ await aller("/grevages");
 await aller("/encaissements?vue=toutes");
 await page.locator("tbody a").first().click();
 await page.waitForURL(/echeance=/);
-await page.fill("input[name=montant]", "40000");
+// Capital supérieur au capital restant dû : refusé.
+await page.fill("input[name=montant_capital]", "999999999");
+await page.fill("input[name=montant_interet]", "0");
 await page.locator("section", { hasText: "Échéance du" }).locator("button[type=submit]").first().click();
-verifier((await message()).includes("Encaissement"), "encaissement partiel enregistré");
+verifier((await message()).includes("dépasse le capital restant dû"), "capital reçu supérieur au capital dû refusé");
+await page.fill("input[name=montant_capital]", "0");
+await page.fill("input[name=montant_interet]", "40000");
+await page.locator("section", { hasText: "Échéance du" }).locator("button[type=submit]").first().click();
+await page.waitForSelector(".note-bon:has-text('Encaissement de')", { timeout: 15000 });
+verifier((await message()).includes("intérêts 40"), "encaissement partiel ventilé (intérêts) enregistré");
 await page.waitForSelector("text=Partiellement encaissée");
 verifier(true, "statut « Partiellement encaissée » avec solde restant dû");
 await capture("02_encaissement");

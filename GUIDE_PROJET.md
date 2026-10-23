@@ -44,7 +44,7 @@ e-mail et mot de passe du premier administrateur. Il disparaît dès qu'un compt
 | | Opérations | `/operations` | Brouillon → Soumis → Validé / Rejeté → Réglé ; annulation motivée et opération corrective ; validation groupée ; pièces justificatives |
 | | Grevages | `/grevages` | Affectations par bénéficiaire ; disponible contrôlé ; augmentation, réduction, mainlevée ; décote, valeur retenue, financement |
 | Flux | Échéancier | `/echeancier` | Projection depuis l'encours résiduel, synthèses mensuelle / annuelle, flux au-delà de l'horizon, bouclage |
-| | Encaissements | `/encaissements` | Prévue, à encaisser, partielle, encaissée, en retard, litige ; saisie et rapprochement ; amortissement proposé à la validation |
+| | Encaissements | `/encaissements` | Prévue, à encaisser, partielle, encaissée, en retard, litige ; saisie ventilée capital / intérêts nets et rapprochement ; amortissement du capital reçu proposé à la validation ; synthèse capital encaissé, intérêts encaissés, échu non reçu, ICNE |
 | Contrôle | Alertes et anomalies | `/controles` | Contrôles automatiques avec responsable et statut de traitement ; quarantaine des imports |
 | | Arrêtés | `/arretes` | Photographie de la situation, verrouillage, réouverture motivée, détection des opérations rétrodatées |
 | | États et exports | `/etats` | Les 9 états du §8.3 en Excel (couverture, sommaire, totaux par formule) ou CSV ; PDF par « Imprimer » |
@@ -71,6 +71,10 @@ Ces choix répondent aux « points à sécuriser » du §1.2 ; ils sont codés d
 - **Précomptés (bons du Trésor)** : aucun coupon futur, coupon couru nul (pas de double comptage).
 - **Disponible** = nominal résiduel détenu − nominal grevé actif ; le financement obtenu n'est jamais soustrait.
 - **Encaissement** : statut déduit des montants reçus et des dates ; « en retard » après le délai de tolérance.
+  Chaque encaissement est ventilé entre **capital** et **intérêts nets** (montant = capital + intérêts, contrôlé en base) ;
+  le capital reçu ne peut pas dépasser le capital restant dû de l'échéance ; un montant global importé sans ventilation
+  est imputé d'abord sur les intérêts restant dus, le solde sur le capital. L'**ICNE** (intérêts courus non échus) est le
+  coupon couru calculé à la date d'arrêté.
 - **Coupon moyen pondéré** affiché avec son hypothèse (détention au pair) ; rendement actuariel, duration et
   sensibilité réservés à l'extension « prix de marché ».
 

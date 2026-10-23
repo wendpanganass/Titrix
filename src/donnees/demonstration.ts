@@ -11,7 +11,7 @@ import "server-only";
 import { randomInt } from "node:crypto";
 import bcrypt from "bcryptjs";
 import type { PoolClient } from "pg";
-import { ajouterJours } from "@/moteur";
+import { ajouterJours, interetNet, ventilerEncaissement } from "@/moteur";
 import { regenererEcheances } from "./echeances";
 import { journaliser } from "./journal";
 
@@ -213,18 +213,22 @@ export async function chargerJeuDemonstration(c: PoolClient, admin: { id: string
   );
   let nbEnc = 0;
   for (const e of passees.rows) {
-    let montant = e.net_attendu;
+    // Ventilation par défaut : intérêts nets en premier, le solde en capital.
+    let { capital, interet } = ventilerEncaissement(e.net_attendu, interetNet({ interetBrut: e.interet_brut, retenue: e.retenue }));
     let reference = `AVIS-CREDIT-${e.date_reglement_prevue}`;
     if (e.position_id === pML27 && e.date_contractuelle === "2026-02-10") continue; // coupon non reçu : en retard
     if (e.position_id === pBF26 && e.date_contractuelle === "2026-07-01") {
-      montant = e.interet_brut - e.retenue; // coupon reçu, capital non remboursé : titre échu à recouvrer
+      capital = 0; // coupon reçu, capital non remboursé : titre échu à recouvrer
       reference = "AVIS-CREDIT-COUPON-SEUL";
     }
-    if (e.position_id === pSN28 && e.date_contractuelle === "2026-05-20") montant = e.net_attendu - 150_000; // écart non expliqué
+    if (e.position_id === pSN28 && e.date_contractuelle === "2026-05-20") interet = Math.max(0, interet - 150_000); // intérêts incomplets : écart non expliqué
+    const montant = Math.round((capital + interet) * 100) / 100;
     if (montant <= 0) continue;
-    await c.query("insert into encaissements (position_id, echeance_id, date_valeur, montant, nature, reference, commentaire) values ($1,$2,$3,$4,'mixte',$5,'Démonstration')", [
-      e.position_id, e.id, e.date_reglement_prevue, montant, reference,
-    ]);
+    await c.query(
+      `insert into encaissements (position_id, echeance_id, date_valeur, montant, montant_capital, montant_interet, nature, reference, commentaire)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,'Démonstration')`,
+      [e.position_id, e.id, e.date_reglement_prevue, montant, capital, interet, capital > 0 && interet > 0 ? "mixte" : capital > 0 ? "capital" : "interet", reference],
+    );
     nbEnc++;
   }
 

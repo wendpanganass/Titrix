@@ -399,7 +399,8 @@ begin
     end if;
     return new;
   end if;
-  if (new.position_id, new.date_valeur, new.montant) is distinct from (old.position_id, old.date_valeur, old.montant) then
+  if (new.position_id, new.date_valeur, new.montant, new.montant_capital, new.montant_interet)
+     is distinct from (old.position_id, old.date_valeur, old.montant, old.montant_capital, old.montant_interet) then
     raise exception 'Un encaissement enregistré ne se modifie pas : annulez-le et saisissez-le à nouveau.' using errcode = 'P0001';
   end if;
   if new.echeance_id is distinct from old.echeance_id then

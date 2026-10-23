@@ -51,7 +51,10 @@ export const CHAMPS: Record<NatureImport, ChampCible[]> = {
     { cle: "conservateur", libelle: "Conservateur", obligatoire: true, synonymes: ["conservateur", "depositaire", "sgi"] },
     { cle: "compte", libelle: "Compte de conservation", synonymes: ["compte", "compte titre"] },
     { cle: "date_valeur", libelle: "Date de valeur", obligatoire: true, synonymes: ["date valeur", "date de valeur", "date", "date encaissement"] },
-    { cle: "montant", libelle: "Montant reçu", obligatoire: true, synonymes: ["montant", "montant recu", "montant encaisse", "credit"] },
+    // Capital et intérêts avant le montant total : « Montant capital » ne doit pas être pris pour le total.
+    { cle: "capital", libelle: "Dont capital", synonymes: ["capital", "capital recu", "montant capital", "principal", "remboursement", "amortissement", "remboursement capital"] },
+    { cle: "interet", libelle: "Dont intérêts (nets)", synonymes: ["interets", "interet", "interets recus", "montant interets", "coupon", "coupons", "coupon recu", "interets nets"] },
+    { cle: "montant", libelle: "Montant total reçu", synonymes: ["montant", "montant recu", "montant encaisse", "montant total", "total", "credit"] },
     { cle: "reference", libelle: "Référence", synonymes: ["reference", "ref", "libelle operation"] },
   ],
 };

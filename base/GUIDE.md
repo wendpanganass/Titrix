@@ -11,6 +11,16 @@
 Les trois scripts sont **rejouables** : les exécuter une seconde fois ne crée rien en double et n'efface
 aucune donnée. Après une mise à jour de Titrix qui modifie un script, il suffit de le rejouer (même ordre).
 
+## Mises à jour d'une base existante
+
+Pour une base déjà en service, le dossier `mises_a_jour/` contient des **correctifs courts**, datés, à
+exécuter une seule fois dans l'ordre des dates (nouvelle requête ⊕ dans le *SQL Editor* de Neon, pas depuis
+l'historique qui tronque les longs scripts). Ils sont rejouables et ne suppriment aucune donnée.
+
+| Fichier | Contenu |
+| --- | --- |
+| `mises_a_jour/2026-10-23_encaissements_capital_interets.sql` | Ventilation de chaque encaissement entre capital et intérêts (colonnes `montant_capital`, `montant_interet`, contrôle capital + intérêts = montant) ; reprise des encaissements existants, intérêts réputés payés en premier |
+
 Le premier administrateur n'est **pas** créé par SQL (aucun mot de passe dans ces fichiers) : ouvrez
 l'application, l'écran « Installation » apparaît tant qu'aucun compte n'existe.
 

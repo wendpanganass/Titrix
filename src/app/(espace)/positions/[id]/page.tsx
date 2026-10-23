@@ -42,9 +42,12 @@ export default async function FichePosition(props: PageProps<"/positions/[id]">)
         where o.position_id = $1 or o.position_destination_id = $1 order by o.date_effet desc, o.numero desc`,
       [id],
     ),
-    lire<{ id: string; date_contractuelle: string; date_reglement_prevue: string; crd_debut: number; capital_du: number; interet_brut: number; retenue: number; net_attendu: number; statut_manuel: "litige" | "annulee" | "remplacee" | null; recu: number; source: string; version_moteur: string }>(
-      `select e.*, coalesce((select sum(montant) from encaissements x where x.echeance_id = e.id and x.statut = 'actif'), 0) as recu
-         from echeances e where e.position_id = $1 order by e.date_contractuelle`,
+    lire<{ id: string; date_contractuelle: string; date_reglement_prevue: string; crd_debut: number; capital_du: number; interet_brut: number; retenue: number; net_attendu: number; statut_manuel: "litige" | "annulee" | "remplacee" | null; recu: number; capital_recu: number; interet_recu: number; source: string; version_moteur: string }>(
+      `select e.*, coalesce(x.recu, 0) as recu, coalesce(x.capital, 0) as capital_recu, coalesce(x.interet, 0) as interet_recu
+         from echeances e
+         left join (select echeance_id, sum(montant) as recu, sum(montant_capital) as capital, sum(montant_interet) as interet
+                      from encaissements where statut = 'actif' group by echeance_id) x on x.echeance_id = e.id
+        where e.position_id = $1 order by e.date_contractuelle`,
       [id],
     ),
     lire<{ id: string; beneficiaire: string; nominal_affecte: number; valeur_retenue: number | null; financement_obtenu: number | null; date_debut: string; date_fin: string | null; statut: string }>(
@@ -79,7 +82,7 @@ export default async function FichePosition(props: PageProps<"/positions/[id]">)
           <Indicateur libelle="Nominal détenu" valeur={compact(l?.nominal ?? 0)} unite={dev} icone="positions" detail={`Quantité ${montant(l?.quantite ?? 0, 0)} titre(s)`} />
           <Indicateur libelle="Capital restant dû contractuel" valeur={compact(l?.capitalContractuel ?? 0)} unite={dev} icone="echeancier"
             detail={l && l.capitalEchuNonRembourse > 0 ? `Échu non remboursé : ${montant(l.capitalEchuNonRembourse)}` : "Aucun capital échu en attente"} ton={l && l.capitalEchuNonRembourse > 0 ? "erreur" : "info"} />
-          <Indicateur libelle="Coupon couru" valeur={compact(l?.couponCouru ?? 0)} unite={dev} icone="monnaie" ton="bon" detail={`Au ${dateFr(a.date)}`} />
+          <Indicateur libelle="ICNE (coupon couru)" valeur={compact(l?.couponCouru ?? 0)} unite={dev} icone="monnaie" ton="bon" detail={`Au ${dateFr(a.date)}`} />
           <Indicateur libelle="Nominal disponible" valeur={compact(l?.nominalDisponible ?? 0)} unite={dev} icone="grevage" ton={(l?.nominalDisponible ?? 0) < 0 ? "erreur" : "alerte"} detail={`Grevé ${montant(l?.nominalGreve ?? 0)}`} />
         </div>
 
@@ -115,7 +118,7 @@ export default async function FichePosition(props: PageProps<"/positions/[id]">)
           {echeances.length === 0 ? <Vide>Aucune échéance (position sans opération validée ou caractéristiques incomplètes).</Vide> : (
             <div className="tab-wrap">
               <table className="tab">
-                <thead><tr><th>Date contractuelle</th><th>Règlement prévu</th><th className="d">CRD début</th><th className="d">Capital</th><th className="d">Intérêts</th><th className="d">Retenue</th><th className="d">Net attendu</th><th className="d">Reçu</th><th>Statut</th></tr></thead>
+                <thead><tr><th>Date contractuelle</th><th>Règlement prévu</th><th className="d">CRD début</th><th className="d">Capital</th><th className="d">Intérêts</th><th className="d">Retenue</th><th className="d">Net attendu</th><th className="d">Capital reçu</th><th className="d">Intérêts reçus</th><th>Statut</th></tr></thead>
                 <tbody>
                   {echeances.map((e) => {
                     const st = statutEcheance({ dateReglementPrevue: e.date_reglement_prevue, netAttendu: e.net_attendu, statutManuel: e.statut_manuel, montantRecu: e.recu }, a.aujourdhui, tol);
@@ -128,7 +131,8 @@ export default async function FichePosition(props: PageProps<"/positions/[id]">)
                         <td className="d">{montant(e.interet_brut)}</td>
                         <td className="d">{montant(e.retenue)}</td>
                         <td className="d"><b>{montant(e.net_attendu)}</b></td>
-                        <td className="d">{montant(e.recu)}</td>
+                        <td className="d">{montant(e.capital_recu)}</td>
+                        <td className="d">{montant(e.interet_recu)}</td>
                         <td><Link href={`/encaissements?echeance=${e.id}`}><StatutEcheanceBadge s={st} /></Link></td>
                       </tr>
                     );
@@ -141,7 +145,13 @@ export default async function FichePosition(props: PageProps<"/positions/[id]">)
                     <td className="d">{montant(futures.reduce((t, e) => t + e.interet_brut, 0))}</td>
                     <td className="d">{montant(futures.reduce((t, e) => t + e.retenue, 0))}</td>
                     <td className="d">{montant(futures.reduce((t, e) => t + e.net_attendu, 0))}</td>
-                    <td colSpan={2}></td>
+                    <td colSpan={3}></td>
+                  </tr>
+                  <tr>
+                    <td colSpan={7}>Total encaissé (toutes dates)</td>
+                    <td className="d">{montant(echeances.reduce((t, e) => t + e.capital_recu, 0))}</td>
+                    <td className="d">{montant(echeances.reduce((t, e) => t + e.interet_recu, 0))}</td>
+                    <td></td>
                   </tr>
                 </tfoot>
               </table>
