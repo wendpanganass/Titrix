@@ -4,6 +4,7 @@
 import Link from "next/link";
 import { SelecteurDate } from "@/composants/client/Coquille";
 import { Formulaire } from "@/composants/client/Formulaire";
+import { AvisPerimetre } from "@/composants/AvisPerimetre";
 import { Contenu, EnTete } from "@/composants/EnTete";
 import { Badge, Carte, Champ, EnTeteImpression, Message, Vide } from "@/composants/ui";
 import { creerPosition } from "@/app/actions/positions";
@@ -47,6 +48,7 @@ export default async function Positions(props: PageProps<"/positions">) {
       <EnTete titre="Positions" sousTitre={`Détention par portefeuille et conservateur au ${dateFr(a.date)}`} droite={<SelecteurDate date={a.date} />} />
       <Contenu>
         <EnTeteImpression titre={`Positions au ${dateFr(a.date)}`} sousTitre={a.parametres.nomEtablissement} />
+        <AvisPerimetre s={s} date={a.date} />
         <form className="barre-filtres noprint" method="get">
           <input type="hidden" name="date" value={a.date} />
           <input className="champ" name="q" defaultValue={val("q")} placeholder="Code, ISIN, libellé, émetteur, compte…" style={{ minWidth: 240 }} />

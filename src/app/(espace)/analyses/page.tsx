@@ -3,6 +3,7 @@
  */
 import Link from "next/link";
 import { SelecteurDate } from "@/composants/client/Coquille";
+import { AvisPerimetre } from "@/composants/AvisPerimetre";
 import { Contenu, EnTete } from "@/composants/EnTete";
 import { Barres, Carte, EnTeteImpression, Vide } from "@/composants/ui";
 import { analyser } from "@/donnees/portefeuille";
@@ -56,6 +57,7 @@ export default async function Analyses(props: PageProps<"/analyses">) {
       <EnTete titre="Analyses" sousTitre={`Ventilation de l'encours par ${AXES[axe].libelle.toLowerCase()} au ${dateFr(a.date)} · ${devise}`} droite={<SelecteurDate date={a.date} conserver={{ axe, devise }} />} />
       <Contenu>
         <EnTeteImpression titre={`Analyse par ${AXES[axe].libelle.toLowerCase()} au ${dateFr(a.date)}`} sousTitre={`${a.parametres.nomEtablissement} · ${devise}`} />
+        <AvisPerimetre s={s} date={a.date} />
         <nav className="stknav noprint">
           {Object.entries(AXES).map(([k, v]) => <Link key={k} href={lien({ axe: k })} className={k === axe ? "on" : ""}>{v.libelle}</Link>)}
         </nav>

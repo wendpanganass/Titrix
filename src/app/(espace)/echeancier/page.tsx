@@ -4,6 +4,7 @@
  */
 import Link from "next/link";
 import { SelecteurDate } from "@/composants/client/Coquille";
+import { AvisPerimetre } from "@/composants/AvisPerimetre";
 import { Contenu, EnTete } from "@/composants/EnTete";
 import { Carte, EnTeteImpression, Indicateur, Message, Vide } from "@/composants/ui";
 import { analyser } from "@/donnees/portefeuille";
@@ -47,6 +48,7 @@ export default async function Echeancier(props: PageProps<"/echeancier">) {
       <EnTete titre="Échéancier" sousTitre={`Projection des tombées depuis l'encours au ${dateFr(a.date)} · horizon ${horizonMois} mois · ${devise}`} droite={<SelecteurDate date={a.date} conserver={{ devise, horizon: String(horizonMois), vue }} />} />
       <Contenu>
         <EnTeteImpression titre={`Échéancier au ${dateFr(a.date)} — ${devise}`} sousTitre={`${a.parametres.nomEtablissement} · horizon jusqu'au ${dateFr(fin)}`} />
+        <AvisPerimetre s={s} date={a.date} />
         <div className="barre-filtres noprint">
           <nav className="stknav" style={{ margin: 0 }}>
             <Link href={lien({ vue: "mensuel" })} className={vue === "mensuel" ? "on" : ""}>Synthèse mensuelle</Link>

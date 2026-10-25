@@ -3,6 +3,7 @@
  */
 import Link from "next/link";
 import { SelecteurDate } from "@/composants/client/Coquille";
+import { AvisPerimetre } from "@/composants/AvisPerimetre";
 import { Contenu, EnTete } from "@/composants/EnTete";
 import { Badge, Barres, Carte, EnTeteImpression, Indicateur, Message, TitreZone, Vide } from "@/composants/ui";
 import { analyser, fluxEncaisses } from "@/donnees/portefeuille";
@@ -81,6 +82,7 @@ export default async function TableauDeBord(props: PageProps<"/">) {
       />
       <Contenu>
         <EnTeteImpression titre={`Tableau de bord au ${dateFr(date)}`} sousTitre={`${parametres.nomEtablissement} · ${devise}`} />
+        <AvisPerimetre s={s} date={date} />
         {totaux.length > 1 && (
           <div className="stknav noprint">
             {totaux.map((x) => (
