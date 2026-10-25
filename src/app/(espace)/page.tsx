@@ -7,6 +7,7 @@ import { AvisPerimetre } from "@/composants/AvisPerimetre";
 import { Contenu, EnTete } from "@/composants/EnTete";
 import { Badge, Barres, Carte, EnTeteImpression, Indicateur, Message, TitreZone, Vide } from "@/composants/ui";
 import { analyser, fluxEncaisses } from "@/donnees/portefeuille";
+import { lire } from "@/lib/db";
 import { exigerSession } from "@/lib/session";
 import { compact, dateFr, montant, moisFr, pourcent } from "@/lib/format";
 import {
@@ -42,6 +43,10 @@ export default async function TableauDeBord(props: PageProps<"/">) {
   const echuInteret = impayes.reduce((x, e) => x + Math.max(0, e.resteInteret), 0);
   // Flux réellement encaissés depuis le 1er janvier de l'année de l'arrêté.
   const debutAnnee = `${date.slice(0, 4)}-01-01`;
+  // Portefeuille réellement vide (tous périmètres) : seul cas où l'on invite à créer ou importer.
+  const baseVide =
+    situation.lignes.length === 0 &&
+    !(await lire<{ x: number }>("select 1 as x from operations where statut in ('valide','regle','soumis') limit 1")).length;
   const encaisse = (await fluxEncaisses(s, debutAnnee, date)).find((x) => x.devise === devise) ?? { capital: 0, interet: 0, nombre: 0 };
   const prochaines = echeancesDevise
     .filter((e) => e.dateReglementPrevue >= date && e.dateReglementPrevue <= ajouterJours(date, 30) && e.statut !== "encaissee")
@@ -92,7 +97,7 @@ export default async function TableauDeBord(props: PageProps<"/">) {
             ))}
           </div>
         )}
-        {situation.lignes.length === 0 && (
+        {baseVide && (
           <Message ton="info">
             Aucune position à cette date. Commencez par <Link href="/instruments">créer les instruments</Link>, puis{" "}
             <Link href="/positions">les positions</Link> et leurs opérations, ou <Link href="/import">importez votre classeur</Link>.
