@@ -4,7 +4,7 @@
  * augmentation, réduction, mainlevée. Chaque mouvement est historisé (mouvements_grevage).
  */
 import { revalidatePath } from "next/cache";
-import { transaction } from "@/lib/db";
+import { messageErreurBase, transaction } from "@/lib/db";
 import { ErreurMetier, exigerPermission, sessionCourante } from "@/lib/session";
 import { lireDate, lireNombre, lireTexte } from "@/lib/format";
 import { journaliser } from "@/donnees/journal";
@@ -86,6 +86,52 @@ export async function changerStatutGrevage(_: Retour, f: FormData): Promise<Reto
     revalidatePath("/grevages");
     revalidatePath(`/grevages/${id}`);
     return ok("Statut du grevage mis à jour.");
+  } catch (e) {
+    return erreur(e);
+  }
+}
+
+/**
+ * Validation groupée des grevages soumis. Chaque grevage passe les contrôles de la base
+ * (quatre yeux, nominal disponible) dans l'ordre de la sélection : un refus n'empêche pas les autres.
+ */
+export async function validerGrevagesSelection(_: Retour, f: FormData): Promise<Retour> {
+  try {
+    const s = await exigerPermission("valider");
+    const ids = f.getAll("ids").map(String).filter(Boolean);
+    if (!ids.length) throw new ErreurMetier("Cochez au moins un grevage.");
+    const bilan = await transaction(s.u.id, async (c) => {
+      let valides = 0;
+      const refus: string[] = [];
+      for (const id of ids) {
+        await c.query("savepoint validation_grevage");
+        try {
+          const r = await c.query("update grevages set statut = 'actif' where id = $1 and statut = 'soumis'", [id]);
+          if (r.rowCount) {
+            await journaliser(c, s, "Grevage validé (actif)", "grevage", id, { selection: true });
+            valides++;
+          }
+          await c.query("release savepoint validation_grevage");
+        } catch (e) {
+          await c.query("rollback to savepoint validation_grevage");
+          const g = await c.query<{ libelle: string }>(
+            `select i.code_interne || ' → ' || b.nom as libelle from grevages g join positions p on p.id = g.position_id
+               join instruments i on i.id = p.instrument_id join contreparties b on b.id = g.beneficiaire_id where g.id = $1`,
+            [id],
+          );
+          refus.push(`${g.rows[0]?.libelle ?? id} : ${messageErreurBase(e)}`);
+        }
+      }
+      return { valides, refus };
+    });
+    revalidatePath("/grevages");
+    revalidatePath("/", "layout");
+    const msg = `${bilan.valides} grevage(s) validé(s).`;
+    if (!bilan.refus.length) return ok(msg);
+    return {
+      ok: bilan.valides > 0,
+      message: `${msg} ${bilan.refus.length} non validé(s) : ${bilan.refus.slice(0, 5).join(" · ")}${bilan.refus.length > 5 ? " …" : ""}`,
+    };
   } catch (e) {
     return erreur(e);
   }

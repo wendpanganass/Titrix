@@ -3,11 +3,11 @@
  * Nominal disponible = nominal résiduel détenu − nominal grevé actif (le financement n'est jamais soustrait).
  */
 import Link from "next/link";
-import { Formulaire } from "@/composants/client/Formulaire";
+import { Formulaire, ToutCocher } from "@/composants/client/Formulaire";
 import { Contenu, EnTete } from "@/composants/EnTete";
 import { StatutGrevage } from "@/composants/Statuts";
 import { Barres, Carte, Champ, Message, Vide } from "@/composants/ui";
-import { creerGrevage } from "@/app/actions/grevages";
+import { creerGrevage, validerGrevagesSelection } from "@/app/actions/grevages";
 import { lire } from "@/lib/db";
 import { exigerSession } from "@/lib/session";
 import { compact, dateFr, montant } from "@/lib/format";
@@ -44,7 +44,37 @@ export default async function Grevages(props: PageProps<"/grevages">) {
   ]);
   const actifs = lignes.filter((g) => g.statut === "actif" && (!g.date_fin || g.date_fin > new Date().toISOString().slice(0, 10)));
   const parBeneficiaire = new Map<string, number>();
+  // Validation groupée : réservée au validateur, sur la vue « À valider », hors grevages qu'il a lui-même saisis.
+  const groupe = s.peut("valider") && val("statut") === "soumis";
+  const soumis = lignes.filter((g) => g.statut === "soumis");
   for (const g of actifs) parBeneficiaire.set(`${g.beneficiaire} (${g.devise})`, (parBeneficiaire.get(`${g.beneficiaire} (${g.devise})`) ?? 0) + g.nominal_affecte);
+
+  const tableau =
+    lignes.length === 0 ? <Vide>Aucun grevage.</Vide> : (
+        <div className="tab-wrap">
+          <table className="tab">
+            <thead><tr>{groupe && <th className="noprint"><ToutCocher nom="ids" /></th>}<th>Bénéficiaire</th><th>Position</th><th className="d">Nominal affecté</th><th className="d">Valeur retenue</th><th className="d">Financement</th><th>Période</th><th>Statut</th></tr></thead>
+            <tbody>
+              {lignes.map((g) => (
+                <tr key={g.id}>
+                  {groupe && (
+                    <td className="noprint">
+                      {g.initiateur_id === s.u.id ? <span className="petit mut" title="Vous en êtes l'initiateur">—</span> : <input type="checkbox" name="ids" value={g.id} aria-label={`Sélectionner le grevage ${g.code} → ${g.beneficiaire}`} />}
+                    </td>
+                  )}
+                  <td><Link href={`/grevages/${g.id}`}><b>{g.beneficiaire}</b></Link></td>
+                  <td><Link href={`/positions/${g.position_id}`}>{g.code}</Link><div className="petit mut">{g.conservateur} · échéance {dateFr(g.date_echeance)}</div></td>
+                  <td className="d">{montant(g.nominal_affecte)} <span className="petit mut">{g.devise}</span></td>
+                  <td className="d">{montant(g.valeur_retenue)}</td>
+                  <td className="d">{montant(g.financement_obtenu)}</td>
+                  <td className="nowrap petit">{dateFr(g.date_debut)} → {g.date_fin ? dateFr(g.date_fin) : "…"}</td>
+                  <td><StatutGrevage s={g.statut} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
 
   return (
     <>
@@ -57,34 +87,27 @@ export default async function Grevages(props: PageProps<"/grevages">) {
           <Link href="/grevages?statut=leve" className={val("statut") === "leve" ? "on" : ""}>Levés</Link>
           <Link href="/grevages?statut=brouillon" className={val("statut") === "brouillon" ? "on" : ""}>Brouillons</Link>
         </nav>
-        <div className="rangee deux-un">
+        {s.peut("valider") && !groupe && soumis.length > 0 && (
+          <Message ton="alerte">
+            {soumis.length} grevage(s) attendent votre validation. <Link href="/grevages?statut=soumis"><b>Les valider en groupe →</b></Link>
+          </Message>
+        )}
+        {groupe && <Message ton="info">Cochez les grevages contrôlés (ou la case d&apos;en-tête pour tout cocher), puis « Valider les grevages cochés » en bas du tableau. Le disponible est contrôlé grevage par grevage ; un refus n&apos;empêche pas les autres. Les grevages que vous avez vous-même saisis ne peuvent pas être validés par vous (—).</Message>}
+        <div className={groupe ? "" : "rangee deux-un"}>
           <Carte titre={`${lignes.length} grevage(s)`} flush>
-            {lignes.length === 0 ? <Vide>Aucun grevage.</Vide> : (
-              <div className="tab-wrap">
-                <table className="tab">
-                  <thead><tr><th>Bénéficiaire</th><th>Position</th><th className="d">Nominal affecté</th><th className="d">Valeur retenue</th><th className="d">Financement</th><th>Période</th><th>Statut</th></tr></thead>
-                  <tbody>
-                    {lignes.map((g) => (
-                      <tr key={g.id}>
-                        <td><Link href={`/grevages/${g.id}`}><b>{g.beneficiaire}</b></Link></td>
-                        <td><Link href={`/positions/${g.position_id}`}>{g.code}</Link><div className="petit mut">{g.conservateur} · échéance {dateFr(g.date_echeance)}</div></td>
-                        <td className="d">{montant(g.nominal_affecte)} <span className="petit mut">{g.devise}</span></td>
-                        <td className="d">{montant(g.valeur_retenue)}</td>
-                        <td className="d">{montant(g.financement_obtenu)}</td>
-                        <td className="nowrap petit">{dateFr(g.date_debut)} → {g.date_fin ? dateFr(g.date_fin) : "…"}</td>
-                        <td><StatutGrevage s={g.statut} /></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+            {groupe ? (
+              // Le formulaire reste affiché même vide, pour garder visible le message de résultat.
+              <Formulaire action={validerGrevagesSelection} bouton={lignes.length ? "Valider les grevages cochés" : null} className="form-validation"
+                confirmation="Valider les grevages cochés ? Le nominal disponible de chaque position est contrôlé à la validation.">
+                {tableau}
+              </Formulaire>
+            ) : tableau}
           </Carte>
-          <Carte titre="Nominal grevé actif par bénéficiaire">
+          {!groupe && <Carte titre="Nominal grevé actif par bénéficiaire">
             {parBeneficiaire.size === 0 ? <Vide>Aucun grevage actif.</Vide> : (
               <Barres lignes={[...parBeneficiaire.entries()].sort((a, b) => b[1] - a[1]).map(([nom, v]) => ({ nom, valeur: v }))} format={compact} couleur="var(--viz-4)" />
             )}
-          </Carte>
+          </Carte>}
         </div>
         {s.peut("grever") && (
           <Carte titre="Nouveau grevage" sousTitre="Le contrôle du disponible est refait par la base au moment de la validation.">

@@ -42,7 +42,7 @@ e-mail et mot de passe du premier administrateur. Il disparaît dès qu'un compt
 | Portefeuille | Instruments | `/instruments` | Référentiel (code interne attribué automatiquement TYPE-PAYS-ANNÉE-N°, ISIN saisi librement avec avertissement si sa clé ne correspond pas), validation à quatre yeux, échéancier contractuel, échéancier officiel, classifications historisées |
 | | Positions | `/positions` | Un instrument × portefeuille × conservateur × compte ; situation à la date, opérations, échéancier, grevages, relevé du conservateur |
 | | Opérations | `/operations` | Brouillon → Soumis → Validé / Rejeté → Réglé ; annulation motivée et opération corrective ; validation groupée ; pièces justificatives |
-| | Grevages | `/grevages` | Affectations par bénéficiaire ; disponible contrôlé ; augmentation, réduction, mainlevée ; décote, valeur retenue, financement |
+| | Grevages | `/grevages` | Affectations par bénéficiaire ; disponible contrôlé ; augmentation, réduction, mainlevée ; décote, valeur retenue, financement ; validation groupée (cases à cocher) dans la vue « À valider » |
 | Flux | Échéancier | `/echeancier` | Projection depuis l'encours résiduel, synthèses mensuelle / annuelle, flux au-delà de l'horizon, bouclage |
 | | Encaissements | `/encaissements` | Prévue, à encaisser, partielle, encaissée, en retard, litige ; saisie ventilée capital / intérêts nets et rapprochement ; amortissement du capital reçu proposé à la validation ; synthèse capital encaissé, intérêts encaissés, échu non reçu, ICNE |
 | Contrôle | Alertes et anomalies | `/controles` | Contrôles automatiques avec responsable et statut de traitement ; quarantaine des imports |
