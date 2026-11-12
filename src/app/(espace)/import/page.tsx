@@ -10,6 +10,9 @@ import { lire } from "@/lib/db";
 import { exigerSession } from "@/lib/session";
 import { dateHeureFr } from "@/lib/format";
 
+// Lecture des gros classeurs : délai allongé sur Vercel.
+export const maxDuration = 60;
+
 export default async function Import() {
   const s = await exigerSession();
   const imports = await lire<{ id: string; nom_fichier: string; nature: string; statut: string; nb_lignes: number; nb_importees: number; nb_doublons: number; nb_quarantaine: number; annule: boolean; cree_le: string; auteur: string | null; empreinte: string }>(
@@ -64,7 +67,7 @@ export default async function Import() {
                       <td className="d">{i.nb_importees}</td>
                       <td className="d">{i.nb_doublons}</td>
                       <td className="d">{i.nb_quarantaine}</td>
-                      <td><Badge ton={i.statut === "importe" ? "bon" : i.statut === "analyse" ? "alerte" : "gris"}>{i.statut === "importe" ? "Importé" : i.statut === "analyse" ? "En analyse" : i.annule ? "Annulé" : "Abandonné"}</Badge></td>
+                      <td title={i.statut === "analyse" ? "Fichier lu, pas encore importé : ouvrez-le pour calculer l'aperçu puis cliquer « Importer » (profil back-office ou administrateur)" : undefined}><Badge ton={i.statut === "importe" ? "bon" : i.statut === "analyse" ? "alerte" : "gris"}>{i.statut === "importe" ? "Importé" : i.statut === "analyse" ? "À finaliser" : i.annule ? "Annulé" : "Abandonné"}</Badge></td>
                       {s.peut("importer") && (
                         <td className="noprint">
                           {i.statut === "importe" ? (

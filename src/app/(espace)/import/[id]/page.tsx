@@ -13,6 +13,9 @@ import { lire, lireUn } from "@/lib/db";
 import { exigerSession } from "@/lib/session";
 import { CHAMPS } from "@/lib/import-regles";
 
+// L'aperçu et l'exécution d'un gros classeur enchaînent de nombreuses requêtes : délai allongé sur Vercel.
+export const maxDuration = 60;
+
 export default async function DetailImport(props: PageProps<"/import/[id]">) {
   const s = await exigerSession();
   const { id } = await props.params;
@@ -89,6 +92,29 @@ export default async function DetailImport(props: PageProps<"/import/[id]">) {
           </Message>
         )}
 
+        {imp.statut === "analyse" && !s.peut("importer") && (
+          <Message ton="alerte">
+            <b>Ce fichier a seulement été lu : rien n&apos;est encore importé.</b> L&apos;import se termine avec le profil qui importe (back-office ou
+            administrateur, ici {suivi?.importateur ?? "la personne qui a déposé le fichier"}) : 1. « Enregistrer et calculer l&apos;aperçu »,
+            2. bouton « Importer » en haut de l&apos;aperçu.
+            {s.peut("valider") && <> Vous pourrez ensuite revenir sur cette page pour <b>valider les positions d&apos;ouverture</b> en une fois.</>}
+          </Message>
+        )}
+        {enAnalyse && !rapport && (
+          <Message ton="info">
+            <b>Étape 1 sur 2</b> — Vérifiez la date de reprise et la correspondance des colonnes, puis cliquez sur « Enregistrer et calculer l&apos;aperçu ».
+            Rien n&apos;est importé tant que vous n&apos;avez pas cliqué sur « Importer » à l&apos;étape 2.
+          </Message>
+        )}
+        {enAnalyse && rapport && !rapport.erreurGlobale && (
+          <Message ton="alerte">
+            <b>Étape 2 sur 2</b> — Aperçu calculé : {rapport.totaux.importer} ligne(s) à importer. Vérifiez-le plus bas, puis cliquez sur{" "}
+            <b>« Importer »</b> (ici ou en haut à droite de l&apos;aperçu). Tant que ce bouton n&apos;est pas cliqué, l&apos;import reste « à finaliser ».
+            <div style={{ marginTop: 8 }}>
+              <BoutonAction action={lancerImport} champs={{ id }} libelle="Importer" classe="btn btn-mini" confirmation={`Importer ${rapport.totaux.importer} ligne(s) et placer ${rapport.totaux.quarantaine} ligne(s) en quarantaine ?`} />
+            </div>
+          </Message>
+        )}
         {enAnalyse && (
           <div className="actions noprint" style={{ marginBottom: 14 }}>
             <BoutonAction action={supprimerImport} champs={{ id, retour: "liste" }} libelle="Supprimer ce fichier lu (jamais importé)" classe="btn-danger btn-mini" confirmation="Supprimer ce fichier de l'historique ? Il n'a jamais été importé : aucune donnée n'est touchée." />
