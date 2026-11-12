@@ -25,8 +25,8 @@ export default async function Controles(props: PageProps<"/controles">) {
       "select s.cle, s.statut, s.responsable_id, u.nom as responsable, s.commentaire, s.modifie_le from suivi_controles s left join utilisateurs u on u.id = s.responsable_id",
     ),
     lire<{ id: string; nom: string }>("select id, nom from utilisateurs where actif order by nom"),
-    lire<{ id: string; numero_ligne: number; motif: string; donnees: Record<string, unknown>; statut: string; commentaire: string; nom_fichier: string; cree_le: string; traite_par: string | null }>(
-      `select q.id, q.numero_ligne, q.motif, q.donnees, q.statut, q.commentaire, i.nom_fichier, i.cree_le, u.nom as traite_par
+    lire<{ id: string; numero_ligne: number; motif: string; donnees: Record<string, unknown>; statut: string; commentaire: string; nom_fichier: string; cree_le: string; traite_par: string | null; import_id: string }>(
+      `select q.id, q.numero_ligne, q.motif, q.donnees, q.statut, q.commentaire, i.nom_fichier, i.cree_le, u.nom as traite_par, q.import_id
          from quarantaine q join imports i on i.id = q.import_id left join utilisateurs u on u.id = q.traite_par
         order by (q.statut = 'ouverte') desc, i.cree_le desc, q.numero_ligne limit 300`,
     ),
@@ -42,6 +42,9 @@ export default async function Controles(props: PageProps<"/controles">) {
   const compte = (n: Niveau) => a.controles.filter((c) => c.niveau === n && !["traite", "accepte"].includes(parCle.get(c.cle)?.statut ?? "")).length;
   const qOuvertes = quarantaine.filter((x) => x.statut === "ouverte");
   const peutTraiter = s.peut("traiter_controles");
+  const peutCorriger = s.peut("importer");
+  // Fichiers ayant des lignes ouvertes : téléchargement pour correction en masse.
+  const fichiersOuverts = [...new Map(qOuvertes.map((x) => [x.import_id, { id: x.import_id, nom: x.nom_fichier, n: qOuvertes.filter((y) => y.import_id === x.import_id).length }])).values()];
 
   return (
     <>
@@ -107,11 +110,22 @@ export default async function Controles(props: PageProps<"/controles">) {
           )}
         </Carte>
 
-        <Carte titre="Quarantaine des imports" sousTitre="Lignes du classeur non importées (divergences, codes invalides, disponibles négatifs…) : jamais corrigées automatiquement, jamais effacées" flush>
+        <Carte id="quarantaine" titre="Quarantaine des imports" sousTitre="Lignes du classeur non importées (divergences, codes invalides, disponibles négatifs…) : jamais corrigées automatiquement, jamais effacées" flush>
+          {peutCorriger && fichiersOuverts.length > 0 && (
+            <div className="petit noprint" style={{ padding: "0 20px 14px" }}>
+              <b>Corriger :</b> ligne par ligne avec « Corriger et intégrer », ou en masse : téléchargez les lignes ouvertes d&apos;un fichier, corrigez-les
+              dans Excel et réimportez-les (Import et reprise) ; chaque ligne intégrée se clôt automatiquement.
+              {fichiersOuverts.map((f) => (
+                <div key={f.id} style={{ marginTop: 6 }}>
+                  <a className="btn-sec btn-mini" href={`/exports/quarantaine/${f.id}`}>Télécharger pour correction</a> {f.nom} — {f.n} ligne(s) ouverte(s)
+                </div>
+              ))}
+            </div>
+          )}
           {quarantaine.length === 0 ? <Vide>Aucune ligne en quarantaine.</Vide> : (
             <div className="tab-wrap">
               <table className="tab">
-                <thead><tr><th>Fichier · ligne</th><th>Motif</th><th>Données</th><th>Statut</th>{peutTraiter && <th className="noprint"></th>}</tr></thead>
+                <thead><tr><th>Fichier · ligne</th><th>Motif</th><th>Données</th><th>Statut</th>{(peutTraiter || peutCorriger) && <th className="noprint"></th>}</tr></thead>
                 <tbody>
                   {quarantaine.map((x) => (
                     <tr key={x.id}>
@@ -119,15 +133,20 @@ export default async function Controles(props: PageProps<"/controles">) {
                       <td className="petit">{x.motif}</td>
                       <td className="petit" style={{ maxWidth: 380 }}>{Object.entries(x.donnees).slice(0, 8).map(([k, v]) => <span key={k}><b>{k}</b> : {String(v ?? "")} · </span>)}</td>
                       <td className="petit"><Badge ton={x.statut === "ouverte" ? "alerte" : x.statut === "corrigee" ? "bon" : "gris"}>{x.statut === "ouverte" ? "Ouverte" : x.statut === "corrigee" ? "Corrigée" : "Rejetée"}</Badge>{x.commentaire && <div className="mut">{x.commentaire} {x.traite_par && `(${x.traite_par})`}</div>}</td>
-                      {peutTraiter && (
+                      {(peutTraiter || peutCorriger) && (
                         <td className="noprint">
                           {x.statut === "ouverte" ? (
                             <div className="actions">
-                              <BoutonAction action={traiterQuarantaine} champs={{ id: x.id, statut: "corrigee" }} libelle="Corrigée" motif="Comment la ligne a-t-elle été corrigée (saisie manuelle, nouvel import…) ?" />
-                              <BoutonAction action={traiterQuarantaine} champs={{ id: x.id, statut: "rejetee" }} libelle="Rejeter" classe="btn-danger btn-mini" motif="Motif du rejet :" />
+                              {peutCorriger && <Link className="btn btn-mini" href={`/controles/quarantaine/${x.id}`}>Corriger et intégrer</Link>}
+                              {peutTraiter && (
+                                <>
+                                  <BoutonAction action={traiterQuarantaine} champs={{ id: x.id, statut: "corrigee" }} libelle="Marquer corrigée" motif="Comment la ligne a-t-elle été corrigée (saisie manuelle…) ?" />
+                                  <BoutonAction action={traiterQuarantaine} champs={{ id: x.id, statut: "rejetee" }} libelle="Rejeter" classe="btn-danger btn-mini" motif="Motif du rejet :" />
+                                </>
+                              )}
                             </div>
                           ) : (
-                            <BoutonAction action={traiterQuarantaine} champs={{ id: x.id, statut: "ouverte" }} libelle="Rouvrir" />
+                            peutTraiter && <BoutonAction action={traiterQuarantaine} champs={{ id: x.id, statut: "ouverte" }} libelle="Rouvrir" />
                           )}
                         </td>
                       )}

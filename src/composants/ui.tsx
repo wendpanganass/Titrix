@@ -10,8 +10,10 @@ export function Carte({
   action,
   flush,
   className = "",
+  id,
   children,
 }: {
+  id?: string;
   titre?: ReactNode;
   sousTitre?: ReactNode;
   action?: ReactNode;
@@ -20,7 +22,7 @@ export function Carte({
   children?: ReactNode;
 }) {
   return (
-    <section className={`sec ${className}`}>
+    <section className={`sec ${className}`} id={id}>
       {(titre || action) && (
         <div className="sec-h">
           <div>

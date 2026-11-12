@@ -10,9 +10,11 @@ import { ventilerEncaissement } from "@/moteur";
 import {
   cleImport,
   divergences,
+  ENTETE_REF_QUARANTAINE,
   interpreterLigneTitre,
   lireDateBrute,
   lireNombreBrut,
+  normaliserEntete,
   type CaracteristiquesComparees,
   type LigneTitre,
   type NatureImport,
@@ -285,10 +287,25 @@ export async function executerImport(c: PoolClient, imp: ImportEnBase, utilisate
   if (rapport.erreurGlobale) return rapport;
   const actions = new Map(rapport.lignes.map((l) => [l.numero, l]));
   const corr = imp.correspondance.colonnes;
+  // Colonne technique des lignes réimportées depuis la quarantaine (voir ENTETE_REF_QUARANTAINE).
+  const iRef = imp.lignes.entetes.findIndex((e) => normaliserEntete(e) === normaliserEntete(ENTETE_REF_QUARANTAINE));
+  const refQuarantaine = (numero: number) => {
+    const v = iRef >= 0 ? String(imp.lignes.lignes[numero - 2]?.[iRef] ?? "").trim() : "";
+    return /^[0-9a-f-]{36}$/i.test(v) ? v : null;
+  };
+  const misEnQuarantaine = new Set<number>();
   const quarantaine = async (numero: number, motif: string) => {
+    misEnQuarantaine.add(numero);
     const brut = imp.lignes.lignes[numero - 2] ?? [];
     const donnees = Object.fromEntries(imp.lignes.entetes.map((e, i) => [e, brut[i] ?? null]));
     await c.query("insert into quarantaine (import_id, numero_ligne, donnees, motif) values ($1,$2,$3,$4)", [imp.id, numero, JSON.stringify(donnees), motif]);
+    // Ligne corrigée encore refusée : la nouvelle ligne de quarantaine remplace l'ancienne (pas de doublon ouvert).
+    const ref = refQuarantaine(numero);
+    if (ref)
+      await c.query(
+        "update quarantaine set statut = 'rejetee', commentaire = $2, traite_par = $3, traite_le = now() where id = $1 and statut = 'ouverte'",
+        [ref, `Remplacée par la ligne ${numero} de l'import « ${imp.nom_fichier} », toujours en quarantaine`, utilisateurId],
+      );
   };
 
   if (imp.nature === "encaissements") {
@@ -390,6 +407,17 @@ export async function executerImport(c: PoolClient, imp: ImportEnBase, utilisate
       }
     }
   }
+  // Lignes corrigées depuis la quarantaine : chaque ligne intégrée clôt sa ligne de quarantaine d'origine.
+  if (iRef >= 0)
+    for (const l of rapport.lignes) {
+      if (l.action !== "importer" || misEnQuarantaine.has(l.numero)) continue;
+      const ref = refQuarantaine(l.numero);
+      if (!ref) continue;
+      await c.query(
+        "update quarantaine set statut = 'corrigee', commentaire = $2, traite_par = $3, traite_le = now() where id = $1 and statut = 'ouverte'",
+        [ref, `Corrigée et intégrée par l'import « ${imp.nom_fichier} » (ligne ${l.numero})`, utilisateurId],
+      );
+    }
   await c.query(
     "update imports set statut = 'importe', rapport = $2, nb_lignes = $3, nb_importees = $4, nb_doublons = $5, nb_quarantaine = $6, importe_le = now() where id = $1",
     [imp.id, JSON.stringify(rapport), rapport.lignes.length, rapport.totaux.importer, rapport.totaux.doublon, rapport.totaux.quarantaine],

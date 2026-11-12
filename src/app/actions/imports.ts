@@ -9,7 +9,8 @@ import { lireUn, transaction } from "@/lib/db";
 import { ErreurMetier, exigerPermission } from "@/lib/session";
 import { lireDate, lireTexte } from "@/lib/format";
 import { lireCsv, lireXlsx } from "@/lib/lecture-fichier";
-import { CHAMPS, devinerCorrespondance, type NatureImport } from "@/lib/import-regles";
+import { CHAMPS, devinerCorrespondance, ENTETE_REF_QUARANTAINE, type NatureImport } from "@/lib/import-regles";
+import type { Brut } from "@/lib/lecture-fichier";
 import { journaliser } from "@/donnees/journal";
 import { analyserImport, annulerImportEnBase, executerImport, type ImportEnBase } from "@/donnees/imports";
 import { regenererEcheances } from "@/donnees/echeances";
@@ -216,4 +217,67 @@ export async function validerOperationsImport(_: Retour, f: FormData): Promise<R
   } catch (e) {
     return erreur(e);
   }
+}
+
+/**
+ * Correction d'une ligne en quarantaine puis intégration : la ligne corrigée passe par un mini-import
+ * (mêmes contrôles, même correspondance et même date de reprise que le fichier d'origine), tracé comme
+ * un import à part entière. En cas de succès, la ligne de quarantaine est close (« corrigée »).
+ */
+export async function integrerLigneQuarantaine(_: Retour, f: FormData): Promise<Retour> {
+  let nouvelImport = "";
+  try {
+    const s = await exigerPermission("importer");
+    const id = lireTexte(f.get("id"));
+    const q = await lireUn<{ statut: string; numero_ligne: number; import_id: string }>("select statut, numero_ligne, import_id from quarantaine where id = $1", [id]);
+    if (!q) throw new ErreurMetier("Ligne de quarantaine introuvable.");
+    if (q.statut !== "ouverte") throw new ErreurMetier("Cette ligne a déjà été traitée.");
+    const source = await chargerImport(q.import_id);
+    const original = source.lignes.lignes[q.numero_ligne - 2] ?? [];
+    // Valeur inchangée : on garde la valeur d'origine (nombre, date) ; sinon le texte saisi.
+    const ligne: Brut[] = source.lignes.entetes.map((_, i) => {
+      const saisi = lireTexte(f.get(`v_${i}`));
+      const avant = original[i] ?? null;
+      if (saisi === (avant === null ? "" : String(avant))) return avant;
+      return saisi === "" ? null : saisi;
+    });
+    const dateReprise = lireDate(f.get("date_reprise")) ?? source.correspondance.dateReprise ?? "";
+    const imp: ImportEnBase = {
+      id: "",
+      nom_fichier: `Correction — ${source.nom_fichier} ligne ${q.numero_ligne}`,
+      nature: source.nature,
+      correspondance: { ...source.correspondance, dateReprise },
+      lignes: { entetes: [...source.lignes.entetes, ENTETE_REF_QUARANTAINE], lignes: [[...ligne, id]], feuille: source.lignes.feuille, feuilles: source.lignes.feuilles },
+      statut: "analyse",
+    };
+    const p = await lireParametres();
+    nouvelImport = await transaction(s.u.id, async (c) => {
+      const r = await c.query<{ id: string }>(
+        "insert into imports (nom_fichier, empreinte, nature, correspondance, lignes, nb_lignes, cree_par) values ($1,$2,$3,$4,$5,1,$6) returning id",
+        [imp.nom_fichier, createHash("sha256").update(JSON.stringify(imp.lignes)).digest("hex"), imp.nature, JSON.stringify(imp.correspondance), JSON.stringify(imp.lignes), s.u.id],
+      );
+      imp.id = r.rows[0].id;
+      const apercu = await analyserImport(c, imp);
+      if (apercu.erreurGlobale) throw new ErreurMetier(apercu.erreurGlobale);
+      const l = apercu.lignes[0];
+      if (!l || l.action === "quarantaine") throw new ErreurMetier(`La ligne corrigée resterait en quarantaine : ${l?.motif ?? "motif inconnu"}. Corrigez la valeur concernée puis réessayez.`);
+      if (l.action === "doublon")
+        throw new ErreurMetier("Cette ligne est déjà présente (doublon) : rien à intégrer. Si c'est voulu, marquez la ligne de quarantaine comme corrigée depuis Alertes et anomalies.");
+      const rapport = await executerImport(c, imp, s.u.id, p.conventionDefaut);
+      if (rapport.erreurGlobale) throw new ErreurMetier(rapport.erreurGlobale);
+      if (imp.nature === "encaissements") {
+        const pos = await c.query<{ position_id: string }>("select distinct position_id from encaissements where import_id = $1", [imp.id]);
+        for (const x of pos.rows) await regenererEcheances(c, x.position_id);
+      }
+      const apres = await c.query<{ statut: string }>("select statut from quarantaine where id = $1", [id]);
+      if (apres.rows[0]?.statut !== "corrigee") throw new ErreurMetier("La ligne n'a pas pu être intégrée au moment de l'import : vérifiez-la et réessayez.");
+      await journaliser(c, s, "Ligne de quarantaine corrigée et intégrée", "quarantaine", id, { import: imp.id, ligne: q.numero_ligne, fichier: source.nom_fichier });
+      return imp.id;
+    });
+    revalidatePath("/controles");
+    revalidatePath("/", "layout");
+  } catch (e) {
+    return erreur(e);
+  }
+  redirect(`/import/${nouvelImport}`);
 }

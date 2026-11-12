@@ -69,10 +69,18 @@ export function normaliserEntete(s: string): string {
     .trim();
 }
 
+/**
+ * Colonne technique ajoutée aux lignes de quarantaine exportées pour correction : à la réimport,
+ * chaque ligne intégrée clôt automatiquement sa ligne de quarantaine d'origine. Jamais associée à un champ.
+ */
+export const ENTETE_REF_QUARANTAINE = "Réf. quarantaine Titrix";
+export const ENTETE_MOTIF_QUARANTAINE = "Motif de la quarantaine (Titrix)";
+
 /** Correspondance proposée : pour chaque champ, la colonne dont l'en-tête correspond le mieux. */
 export function devinerCorrespondance(nature: NatureImport, entetes: string[]): Record<string, number | null> {
+  const techniques = new Set([normaliserEntete(ENTETE_REF_QUARANTAINE), normaliserEntete(ENTETE_MOTIF_QUARANTAINE)]);
   const normes = entetes.map(normaliserEntete);
-  const prises = new Set<number>();
+  const prises = new Set<number>(normes.flatMap((n, k) => (techniques.has(n) ? [k] : [])));
   const res: Record<string, number | null> = {};
   for (const champ of CHAMPS[nature]) {
     let trouve: number | null = null;

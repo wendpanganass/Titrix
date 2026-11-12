@@ -29,8 +29,9 @@ export default async function DetailImport(props: PageProps<"/import/[id]">) {
   const enAnalyse = imp.statut === "analyse" && s.peut("importer");
   // Avancement après l'import : positions d'ouverture à valider, instruments à valider.
   const suivi = (
-    await lire<{ soumises: number; validees: number; mes_soumises: number; instruments: number; importateur: string | null; importateur_id: string | null }>(
+    await lire<{ soumises: number; validees: number; mes_soumises: number; instruments: number; importateur: string | null; importateur_id: string | null; quarantaine: number }>(
       `select (select count(*)::int from operations where import_id = $1 and statut = 'soumis') as soumises,
+              (select count(*)::int from quarantaine where import_id = $1 and statut = 'ouverte') as quarantaine,
               (select count(*)::int from operations where import_id = $1 and statut in ('valide','regle')) as validees,
               (select count(*)::int from operations where import_id = $1 and statut = 'soumis' and initiateur_id = $2) as mes_soumises,
               (select count(*)::int from instruments i where i.statut = 'a_valider'
@@ -46,7 +47,14 @@ export default async function DetailImport(props: PageProps<"/import/[id]">) {
       <EnTete titre={`Import — ${imp.nom_fichier}`} sousTitre={`${imp.nature === "base_titres" ? "Base titres" : "Encaissements"} · feuille « ${imp.lignes.feuille} » · ${imp.lignes.lignes.length} ligne(s) lue(s)`} />
       <Contenu>
         <p className="petit noprint"><Link href="/import">← Imports</Link></p>
-        {imp.statut === "importe" && <Message ton="bon">Import terminé. Les lignes en quarantaine sont consultables dans <Link href="/controles">Alertes et anomalies</Link>.</Message>}
+        {imp.statut === "importe" && <Message ton="bon">Import terminé. Les lignes en quarantaine sont consultables dans <Link href="/controles#quarantaine">Alertes et anomalies</Link>.</Message>}
+        {imp.statut === "importe" && suivi && suivi.quarantaine > 0 && (
+          <Message ton="alerte">
+            {suivi.quarantaine} ligne(s) de ce fichier sont en quarantaine (non importées).{" "}
+            <Link href="/controles#quarantaine"><b>Les corriger et les intégrer →</b></Link>
+            {s.peut("importer") && <> · <a href={`/exports/quarantaine/${id}`}>télécharger pour correction dans Excel</a></>}
+          </Message>
+        )}
         {imp.statut === "importe" && imp.nature === "base_titres" && suivi && (
           <Carte
             titre="Étapes suivantes"
