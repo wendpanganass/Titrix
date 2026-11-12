@@ -14,6 +14,11 @@ export interface Colonne {
   total?: boolean;
 }
 export type Ligne = Record<string, string | number | null | undefined>;
+/**
+ * Une ligne portant `_sousTotal` est un sous-total de groupe : ses colonnes « total » deviennent
+ * des formules SOUS.TOTAL sur les lignes du groupe (ignorées par le total général et par le CSV).
+ */
+const estSousTotal = (l: Ligne) => Boolean(l._sousTotal);
 
 const MARINE = "FF1F4E8C";
 const GRIS_BLEU = "FFE7EDF6";
@@ -80,16 +85,24 @@ export class Classeur {
       ws.getColumn(k + 1).width = c.largeur ?? (c.format === "texte" || !c.format ? 22 : 15);
     });
     entete.height = 30;
+    let debutGroupe = 4;
     lignes.forEach((l, i) => {
-      const row = ws.getRow(4 + i);
+      const r = 4 + i;
+      const row = ws.getRow(r);
+      const sousTotal = estSousTotal(l);
       colonnes.forEach((c, k) => {
         const cell = row.getCell(k + 1);
         const v = l[c.cle];
-        cell.value = c.format === "date" ? (versDate(v) ?? (v as string) ?? null) : (v ?? null);
+        if (sousTotal && c.total) {
+          const lettre = ws.getColumn(k + 1).letter;
+          cell.value = { formula: `SUBTOTAL(9,${lettre}${debutGroupe}:${lettre}${Math.max(r - 1, debutGroupe)})`, result: Math.round((Number(v) || 0) * 100) / 100 };
+        } else cell.value = c.format === "date" ? (versDate(v) ?? (v as string) ?? null) : (v ?? null);
         if (c.format && FORMATS[c.format]) cell.numFmt = FORMATS[c.format]!;
-        cell.font = { name: POLICE, size: 10 };
-        cell.border = { bottom: { style: "hair", color: { argb: "FFE2E7F0" } } };
+        cell.font = { name: POLICE, size: 10, bold: sousTotal };
+        if (sousTotal) cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF3F6FB" } };
+        cell.border = sousTotal ? { top: { style: "hair" }, bottom: { style: "thin", color: { argb: "FFB8C4D6" } } } : { bottom: { style: "hair", color: { argb: "FFE2E7F0" } } };
       });
+      if (sousTotal) debutGroupe = r + 1;
     });
     const fin = 3 + lignes.length;
     if (lignes.length) ws.autoFilter = { from: { row: 3, column: 1 }, to: { row: fin, column: colonnes.length } };
@@ -101,7 +114,7 @@ export class Classeur {
         const cell = row.getCell(k + 1);
         if (c.total) {
           const lettre = ws.getColumn(k + 1).letter;
-          const somme = lignes.reduce((t, l) => t + (Number(l[c.cle]) || 0), 0);
+          const somme = lignes.filter((l) => !estSousTotal(l)).reduce((t, l) => t + (Number(l[c.cle]) || 0), 0);
           cell.value = { formula: `SUBTOTAL(9,${lettre}4:${lettre}${Math.max(fin, 4)})`, result: Math.round(somme * 100) / 100 };
           if (c.format && FORMATS[c.format]) cell.numFmt = FORMATS[c.format]!;
         }
@@ -110,7 +123,7 @@ export class Classeur {
         cell.border = { top: { style: "thin" }, bottom: { style: "double" } };
       });
     }
-    this.sommaire.push({ nom: ws.name, contenu, lignes: lignes.length });
+    this.sommaire.push({ nom: ws.name, contenu, lignes: lignes.filter((l) => !estSousTotal(l)).length });
     return this;
   }
 
@@ -181,6 +194,6 @@ export function versCsv(colonnes: Colonne[], lignes: Ligne[]): string {
     return /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   const tete = colonnes.map((c) => echapper(c.titre)).join(";");
-  const corps = lignes.map((l) => colonnes.map((c) => echapper(l[c.cle], c.format)).join(";"));
+  const corps = lignes.filter((l) => !estSousTotal(l)).map((l) => colonnes.map((c) => echapper(l[c.cle], c.format)).join(";"));
   return "﻿" + [tete, ...corps].join("\r\n");
 }

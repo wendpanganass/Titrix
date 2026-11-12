@@ -20,6 +20,7 @@ export async function GET(req: Request, ctx: RouteContext<"/exports/[etat]">) {
     date: url.searchParams.get("date"),
     devise: url.searchParams.get("devise"),
     arrete: url.searchParams.get("arrete"),
+    horizon: url.searchParams.get("horizon"),
   });
   await transaction(s.u.id, (c) =>
     journaliser(c, s, `Export ${format.toUpperCase()} : ${e.titre}`, "export", etat, { date: e.date, devise: e.devise, lignes: e.feuilles.reduce((t, f) => t + f.lignes.length, 0) }),

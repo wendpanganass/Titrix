@@ -47,7 +47,7 @@ e-mail et mot de passe du premier administrateur. Il disparaît dès qu'un compt
 | | Encaissements | `/encaissements` | Prévue, à encaisser, partielle, encaissée, en retard, litige ; saisie ventilée capital / intérêts nets et rapprochement ; amortissement du capital reçu proposé à la validation ; synthèse capital encaissé, intérêts encaissés, échu non reçu, ICNE |
 | Contrôle | Alertes et anomalies | `/controles` | Contrôles automatiques avec responsable et statut de traitement ; quarantaine des imports |
 | | Arrêtés | `/arretes` | Photographie de la situation, verrouillage, réouverture motivée, détection des opérations rétrodatées |
-| | États et exports | `/etats` | Les 9 états du §8.3 en Excel (couverture, sommaire, totaux par formule) ou CSV ; PDF par « Imprimer » |
+| | États et exports | `/etats` | Les 9 états du §8.3, plus les tombées de capital et d'intérêts par mois et par code ISIN (horizon au choix, sous-totaux mensuels), en Excel (couverture, sommaire, totaux par formule) ou CSV ; PDF par « Imprimer » |
 | Administration | Import et reprise | `/import` | Dépôt .xlsx / .csv, correspondance des colonnes, aperçu, doublons, divergences, quarantaine ; modèles vierges ; **annulation d'un import** (pour le supprimer ou le remplacer par un fichier corrigé) |
 | | Référentiels · Utilisateurs · Journal · Paramètres | `/referentiels` `/utilisateurs` `/journal` `/parametres` | Administration ; journal filtrable |
 

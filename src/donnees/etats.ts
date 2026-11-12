@@ -7,14 +7,16 @@ import "server-only";
 import { lire, lireUn } from "@/lib/db";
 import type { Session } from "@/lib/session";
 import type { Colonne, Ligne } from "@/lib/excel";
+import { moisFr } from "@/lib/format";
 import { analyser } from "./portefeuille";
 import type { Photographie } from "./arretes";
-import { anneeDe, fluxProjetes, interetNet, LIBELLES_NIVEAU, LIBELLES_OPERATION, LIBELLES_STATUT_ECHEANCE, moisDe, type TypeOperation } from "@/moteur";
+import { ajouterMois, anneeDe, arrondi2, fluxProjetes, interetNet, joursEntre, LIBELLES_NIVEAU, LIBELLES_OPERATION, LIBELLES_STATUT_ECHEANCE, moisDe, type TypeOperation } from "@/moteur";
 
 export const ETATS = {
   inventaire: "Inventaire détaillé du portefeuille",
   echeancier: "Échéancier par instrument et position",
   tombees: "Synthèse mensuelle et annuelle des tombées",
+  tombees_isin: "Tombées de capital et d'intérêts par mois, par code ISIN",
   grevage: "Situation du grevage",
   encaissements: "État des encaissements et impayés",
   rapprochement: "Rapprochement par conservateur",
@@ -61,7 +63,14 @@ const COLS_POSITION: Colonne[] = [
   { titre: "Devise", cle: "devise", largeur: 8 },
 ];
 
-export async function construireEtat(s: Session, nom: NomEtat, p: { date?: string | null; devise?: string | null; arrete?: string | null }): Promise<Etat> {
+/** Horizons proposés pour les états de tombées (en mois ; 0 = toutes les tombées jusqu'à l'échéance finale). */
+export const HORIZONS_TOMBEES = [3, 6, 12, 24, 36, 60, 0] as const;
+
+export async function construireEtat(
+  s: Session,
+  nom: NomEtat,
+  p: { date?: string | null; devise?: string | null; arrete?: string | null; horizon?: string | null },
+): Promise<Etat> {
   // Situation à un arrêté figé : on restitue la photographie telle qu'elle a été verrouillée.
   if (nom === "situation" && p.arrete) {
     const a = await lireUn<{ date_arrete: string; statut: string; resultat: Photographie }>("select date_arrete, statut, resultat from arretes where id = $1", [p.arrete]);
@@ -192,6 +201,134 @@ export async function construireEtat(s: Session, nom: NomEtat, p: { date?: strin
         feuilles: [
           { nom: "Mensuel", contenu: "Tombées par mois", colonnes: cols("Mois"), lignes: grouper(moisDe) },
           { nom: "Annuel", contenu: "Tombées par année", colonnes: cols("Année"), lignes: grouper(anneeDe) },
+        ],
+      };
+    }
+    case "tombees_isin": {
+      // Horizon en mois depuis la date d'arrêté (0 = jusqu'à la dernière tombée).
+      const h = Number(p.horizon ?? 12);
+      const mois = (HORIZONS_TOMBEES as readonly number[]).includes(h) ? h : 12;
+      const fin = mois ? ajouterMois(a.date, mois) : ajouterMois(a.date, 12 * 60);
+      const { flux } = fluxProjetes(lignes, a.date, joursEntre(a.date, fin));
+      const tri = [...flux]
+        .filter((e) => e.dateContractuelle > a.date && Math.abs(e.capitalDu) + Math.abs(e.interetBrut) > 0.005)
+        .sort(
+          (x, y) =>
+            moisDe(x.dateContractuelle).localeCompare(moisDe(y.dateContractuelle)) ||
+            x.ligne.instrument.devise.localeCompare(y.ligne.instrument.devise) ||
+            x.dateContractuelle.localeCompare(y.dateContractuelle) ||
+            (x.ligne.instrument.isin || x.ligne.instrument.code).localeCompare(y.ligne.instrument.isin || y.ligne.instrument.code),
+        );
+      const libMois = (d: string) => {
+        const l = moisFr(moisDe(d));
+        return l.charAt(0).toUpperCase() + l.slice(1);
+      };
+      // Détail : une ligne par tombée, un sous-total par mois (et par devise si plusieurs).
+      const detail: Ligne[] = [];
+      type Cumul = { mois: string; devise: string; capital: number; interet: number; retenue: number; net: number; tombees: number; isin: Set<string> };
+      const synthese: Cumul[] = [];
+      let courant: Cumul | null = null;
+      const cloturer = () => {
+        if (!courant) return;
+        detail.push({
+          _sousTotal: 1,
+          mois: `Total ${courant.mois}`,
+          libelle: `${courant.tombees} tombée(s) · ${courant.isin.size} titre(s)`,
+          capital: arrondi2(courant.capital),
+          interet: arrondi2(courant.interet),
+          retenue: arrondi2(courant.retenue),
+          interet_net: arrondi2(courant.interet - courant.retenue),
+          net: arrondi2(courant.net),
+          devise: courant.devise,
+        });
+        synthese.push(courant);
+      };
+      for (const e of tri) {
+        const m = libMois(e.dateContractuelle);
+        const dev = e.ligne.instrument.devise;
+        if (!courant || courant.mois !== m || courant.devise !== dev) {
+          cloturer();
+          courant = { mois: m, devise: dev, capital: 0, interet: 0, retenue: 0, net: 0, tombees: 0, isin: new Set() };
+        }
+        courant.capital += e.capitalDu;
+        courant.interet += e.interetBrut;
+        courant.retenue += e.retenue;
+        courant.net += e.netAttendu;
+        courant.tombees++;
+        courant.isin.add(e.ligne.instrument.isin || e.ligne.instrument.code);
+        detail.push({
+          mois: m,
+          date: e.dateContractuelle,
+          reglement: e.dateReglementPrevue,
+          isin: e.ligne.instrument.isin || "",
+          code: e.ligne.instrument.code,
+          libelle: e.ligne.instrument.libelle,
+          emetteur: e.ligne.instrument.emetteur,
+          conservateur: e.ligne.position.conservateur,
+          portefeuille: e.ligne.position.portefeuille,
+          capital: e.capitalDu,
+          interet: e.interetBrut,
+          retenue: e.retenue,
+          interet_net: arrondi2(e.interetBrut - e.retenue),
+          net: e.netAttendu,
+          devise: dev,
+        });
+      }
+      cloturer();
+      const periode = mois ? `du ${a.date} au ${fin} (${mois} mois)` : `à partir du ${a.date}, jusqu'à la dernière tombée`;
+      return {
+        ...base,
+        titre: ETATS.tombees_isin,
+        filtres: [base.filtres, mois ? `Horizon ${mois} mois` : "Toutes les tombées"].filter(Boolean).join(" · "),
+        feuilles: [
+          {
+            nom: "Tombées par mois",
+            contenu: `Tombées de capital et d'intérêts ${periode}, par mois et par code ISIN`,
+            colonnes: [
+              { titre: "Mois", cle: "mois", largeur: 18 },
+              { titre: "Date de tombée", cle: "date", format: "date", largeur: 12 },
+              { titre: "Règlement prévu", cle: "reglement", format: "date", largeur: 12 },
+              { titre: "Code ISIN", cle: "isin", largeur: 15 },
+              { titre: "Code interne", cle: "code", largeur: 16 },
+              { titre: "Libellé", cle: "libelle", largeur: 30 },
+              { titre: "Émetteur", cle: "emetteur" },
+              { titre: "Conservateur", cle: "conservateur" },
+              { titre: "Portefeuille", cle: "portefeuille" },
+              { titre: "Capital", cle: "capital", format: "montant", total: true },
+              { titre: "Intérêts bruts", cle: "interet", format: "montant", total: true },
+              { titre: "Retenue", cle: "retenue", format: "montant", total: true },
+              { titre: "Intérêts nets", cle: "interet_net", format: "montant", total: true },
+              { titre: "Total net (capital + intérêts nets)", cle: "net", format: "montant", total: true },
+              { titre: "Devise", cle: "devise", largeur: 8 },
+            ],
+            lignes: detail,
+          },
+          {
+            nom: "Synthèse mensuelle",
+            contenu: `Totaux par mois ${periode}`,
+            colonnes: [
+              { titre: "Mois", cle: "mois", largeur: 18 },
+              { titre: "Tombées", cle: "tombees", format: "entier", largeur: 10 },
+              { titre: "Titres (ISIN)", cle: "titres", format: "entier", largeur: 12 },
+              { titre: "Capital", cle: "capital", format: "montant", total: true },
+              { titre: "Intérêts bruts", cle: "interet", format: "montant", total: true },
+              { titre: "Retenue", cle: "retenue", format: "montant", total: true },
+              { titre: "Intérêts nets", cle: "interet_net", format: "montant", total: true },
+              { titre: "Total net", cle: "net", format: "montant", total: true },
+              { titre: "Devise", cle: "devise", largeur: 8 },
+            ],
+            lignes: synthese.map((x) => ({
+              mois: x.mois,
+              tombees: x.tombees,
+              titres: x.isin.size,
+              capital: arrondi2(x.capital),
+              interet: arrondi2(x.interet),
+              retenue: arrondi2(x.retenue),
+              interet_net: arrondi2(x.interet - x.retenue),
+              net: arrondi2(x.net),
+              devise: x.devise,
+            })),
+          },
         ],
       };
     }

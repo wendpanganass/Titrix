@@ -269,7 +269,7 @@ for (const [chemin, nom] of [["/", "10_tableau_de_bord"], ["/analyses?axe=maturi
   await aller(chemin);
   await capture(nom);
 }
-for (const etat of ["inventaire", "echeancier", "tombees", "grevage", "encaissements", "rapprochement", "anomalies", "situation", "historique"]) {
+for (const etat of ["inventaire", "echeancier", "tombees", "tombees_isin", "grevage", "encaissements", "rapprochement", "anomalies", "situation", "historique"]) {
   const r = await page.request.get(`${ADRESSE}/exports/${etat}?date=2026-01-31&devise=XOF&format=xlsx`);
   verifier(r.status() === 200 && r.headers()["content-type"].includes("spreadsheetml"), `export Excel « ${etat} »`);
   fs.writeFileSync(`${CAPTURES}${etat}.xlsx`, await r.body());

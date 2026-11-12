@@ -29,7 +29,7 @@ les écrans et actions utilisent `donnees`, `moteur`, `lib` et `composants`. Un 
 | `src/donnees/portefeuille.ts` | Chargement des données (filtrées par portefeuilles autorisés) et `analyser()` |
 | `src/donnees/echeances.ts` | Échéances enregistrées, recalculées après chaque événement |
 | `src/donnees/imports.ts` · `src/lib/import-regles.ts` | Reprise : aperçu, doublons, divergences, quarantaine |
-| `src/donnees/etats.ts` · `src/lib/excel.ts` | Les 9 états et la charte des classeurs Excel |
+| `src/donnees/etats.ts` · `src/lib/excel.ts` | Les états (9 du §8.3 + tombées par ISIN) et la charte des classeurs Excel (sous-totaux de groupe) |
 | `src/lib/session.ts` · `src/lib/droits.ts` | Sessions (jeton aléatoire, empreinte en base) et matrice des droits |
 | `src/composants/` | Coquille, composants d'affichage (`ui.tsx`), formulaires clients |
 
