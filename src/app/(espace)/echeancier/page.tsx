@@ -4,10 +4,12 @@
  */
 import Link from "next/link";
 import { SelecteurDate } from "@/composants/client/Coquille";
+import { Filtres } from "@/composants/client/Filtres";
 import { AvisPerimetre } from "@/composants/AvisPerimetre";
 import { Contenu, EnTete } from "@/composants/EnTete";
 import { Carte, EnTeteImpression, Indicateur, Message, Vide } from "@/composants/ui";
 import { analyser } from "@/donnees/portefeuille";
+import { preparerFiltres } from "@/donnees/filtres";
 import { exigerSession } from "@/lib/session";
 import { compact, dateFr, montant, moisFr } from "@/lib/format";
 import { anneeDe, fluxProjetes, moisDe, totauxParDevise } from "@/moteur";
@@ -21,7 +23,9 @@ export default async function Echeancier(props: PageProps<"/echeancier">) {
   const devise = val("devise") || (devises.includes(a.parametres.deviseReference) ? a.parametres.deviseReference : devises[0] ?? a.parametres.deviseReference);
   const horizonMois = Math.min(600, Math.max(1, Number(val("horizon")) || a.parametres.horizonMois));
   const vue = val("vue") === "detail" ? "detail" : val("vue") === "annuel" ? "annuel" : "mensuel";
-  const lignes = a.situation.lignes.filter((l) => l.instrument.devise === devise && (!val("portefeuille") || l.position.portefeuilleId === val("portefeuille")));
+  const filtres = await preparerFiltres(q, a.date);
+  const lignesDevise = a.situation.lignes.filter((l) => l.instrument.devise === devise);
+  const lignes = lignesDevise.filter((l) => filtres.retenue(l));
   const { flux, horsHorizon, fin } = fluxProjetes(lignes, a.date, Math.round(horizonMois * 30.4375));
   const encours = lignes.reduce((t, l) => t + l.nominal, 0);
   const echu = lignes.reduce((t, l) => t + l.capitalEchuNonRembourse, 0);
@@ -41,13 +45,17 @@ export default async function Echeancier(props: PageProps<"/echeancier">) {
     groupes.set(k, g);
   }
   const lien = (extra: Record<string, string>) =>
-    `/echeancier?${new URLSearchParams({ date: a.date, devise, horizon: String(horizonMois), vue, ...(val("portefeuille") ? { portefeuille: val("portefeuille") } : {}), ...extra })}`;
+    `/echeancier?${new URLSearchParams({ date: a.date, devise, horizon: String(horizonMois), vue, ...filtres.adresse, ...extra })}`;
 
   return (
     <>
-      <EnTete titre="Échéancier" sousTitre={`Projection des tombées depuis l'encours au ${dateFr(a.date)} · horizon ${horizonMois} mois · ${devise}`} droite={<SelecteurDate date={a.date} conserver={{ devise, horizon: String(horizonMois), vue }} />} />
+      <EnTete
+        titre="Échéancier"
+        sousTitre={`Projection des tombées depuis l'encours au ${dateFr(a.date)} · horizon ${horizonMois} mois · ${devise}${filtres.actifs.length ? ` · filtré (${filtres.actifs.length})` : ""}`}
+        droite={<SelecteurDate date={a.date} conserver={{ devise, horizon: String(horizonMois), vue, ...filtres.adresse }} />}
+      />
       <Contenu>
-        <EnTeteImpression titre={`Échéancier au ${dateFr(a.date)} — ${devise}`} sousTitre={`${a.parametres.nomEtablissement} · horizon jusqu'au ${dateFr(fin)}`} />
+        <EnTeteImpression titre={`Échéancier au ${dateFr(a.date)} — ${devise}`} sousTitre={`${a.parametres.nomEtablissement} · horizon jusqu'au ${dateFr(fin)}${filtres.resume ? ` · Filtres : ${filtres.resume}` : ""}`} />
         <AvisPerimetre s={s} date={a.date} />
         <div className="barre-filtres noprint">
           <nav className="stknav" style={{ margin: 0 }}>
@@ -58,6 +66,7 @@ export default async function Echeancier(props: PageProps<"/echeancier">) {
           <form method="get" className="actions">
             <input type="hidden" name="date" value={a.date} />
             <input type="hidden" name="vue" value={vue} />
+            {Object.entries(filtres.adresse).map(([k, v]) => <input key={k} type="hidden" name={k} value={v} />)}
             <select className="champ" name="devise" defaultValue={devise}>{devises.map((d) => <option key={d}>{d}</option>)}</select>
             <select className="champ" name="horizon" defaultValue={String(horizonMois)}>
               {[3, 6, 12, 24, 36, 60, 120, 360].map((m) => <option key={m} value={m}>{m} mois</option>)}
@@ -65,6 +74,14 @@ export default async function Echeancier(props: PageProps<"/echeancier">) {
             <button className="btn-sec">Appliquer</button>
           </form>
         </div>
+        {lignesDevise.length > 0 && (
+          <Filtres
+            filtres={filtres.listes(lignesDevise)}
+            conserver={{ date: val("date") || undefined, devise: val("devise") || undefined, horizon: val("horizon") || undefined, vue: val("vue") || undefined }}
+            reinitialiser={filtres.actifs.length ? `/echeancier?${new URLSearchParams({ date: a.date, devise, horizon: String(horizonMois), vue })}` : undefined}
+          />
+        )}
+        {filtres.actifs.length > 0 && lignes.length === 0 && <Message ton="info">Aucune position ne correspond à cette combinaison de filtres.</Message>}
         <div className="grid-kpi">
           <Indicateur libelle="Encours nominal à l'arrêté" valeur={compact(encours)} unite={devise} icone="positions" detail={`${lignes.length} position(s)`} />
           <Indicateur libelle="Capital projeté dans l'horizon" valeur={compact(capital)} unite={devise} icone="echeancier" detail={`Au-delà : ${compact(horsHorizon.capital)}`} />

@@ -37,7 +37,7 @@ e-mail et mot de passe du premier administrateur. Il disparaît dès qu'un compt
 
 | Rubrique | Écran | Adresse | Rôle |
 | --- | --- | --- | --- |
-| Pilotage | Tableau de bord | `/` | 8 indicateurs du §8.1, tombées 12 mois, à surveiller, répartitions, échéances à 30 jours — à une date d'arrêté choisie ; filtres en listes déroulantes (portefeuille, conservateur, pays, zone, émetteur, type, classification, notation, maturité, statut et bénéficiaire du grevage, instrument) appliqués à tous les indicateurs |
+| Pilotage | Tableau de bord | `/` | 8 indicateurs du §8.1, tombées 12 mois, à surveiller, répartitions, échéances à 30 jours — à une date d'arrêté choisie ; filtres en listes déroulantes (portefeuille, conservateur, pays, zone, émetteur, type, classification, notation, maturité, statut et bénéficiaire du grevage, instrument) appliqués à tous les indicateurs (mêmes filtres sur l'Échéancier, les Encaissements et les États Excel, module `src/donnees/filtres.ts`) |
 | | Analyses | `/analyses` | Ventilation par pays, zone, émetteur, conservateur, instrument, type, portefeuille, classification, notation, grevage, maturité ; fiches des indicateurs |
 | Portefeuille | Instruments | `/instruments` | Référentiel (code interne attribué automatiquement TYPE-PAYS-ANNÉE-N°, ISIN saisi librement avec avertissement si sa clé ne correspond pas), validation à quatre yeux, échéancier contractuel, échéancier officiel, classifications historisées |
 | | Positions | `/positions` | Un instrument × portefeuille × conservateur × compte ; situation à la date, opérations, échéancier, grevages, relevé du conservateur |

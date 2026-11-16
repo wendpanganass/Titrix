@@ -7,6 +7,7 @@ import { sessionCourante } from "@/lib/session";
 import { Classeur, versCsv } from "@/lib/excel";
 import { construireEtat, ETATS, type NomEtat } from "@/donnees/etats";
 import { journaliser } from "@/donnees/journal";
+import { FILTRES } from "@/donnees/filtres";
 
 export async function GET(req: Request, ctx: RouteContext<"/exports/[etat]">) {
   const s = await sessionCourante();
@@ -21,9 +22,10 @@ export async function GET(req: Request, ctx: RouteContext<"/exports/[etat]">) {
     devise: url.searchParams.get("devise"),
     arrete: url.searchParams.get("arrete"),
     horizon: url.searchParams.get("horizon"),
+    filtres: Object.fromEntries(FILTRES.flatMap((k) => (url.searchParams.get(k) ? [[k, url.searchParams.get(k)!]] : []))),
   });
   await transaction(s.u.id, (c) =>
-    journaliser(c, s, `Export ${format.toUpperCase()} : ${e.titre}`, "export", etat, { date: e.date, devise: e.devise, lignes: e.feuilles.reduce((t, f) => t + f.lignes.length, 0) }),
+    journaliser(c, s, `Export ${format.toUpperCase()} : ${e.titre}`, "export", etat, { date: e.date, devise: e.devise, filtres: e.filtres, lignes: e.feuilles.reduce((t, f) => t + f.lignes.length, 0) }),
   );
   const nom = `titrix_${etat}_${e.date}`;
   if (format === "csv") {

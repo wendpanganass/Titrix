@@ -10,6 +10,8 @@ import { StatutEcheanceBadge } from "@/composants/Statuts";
 import { Carte, Champ, Indicateur, Message, Vide } from "@/composants/ui";
 import { annulerEncaissement, enregistrerEncaissement, qualifierEcheance } from "@/app/actions/encaissements";
 import { analyser, fluxEncaisses } from "@/donnees/portefeuille";
+import { preparerFiltres } from "@/donnees/filtres";
+import { Filtres } from "@/composants/client/Filtres";
 import { lire } from "@/lib/db";
 import { exigerSession } from "@/lib/session";
 import { compact, dateFr, dateHeureFr, montant } from "@/lib/format";
@@ -29,16 +31,23 @@ export default async function Encaissements(props: PageProps<"/encaissements">) 
   const vue = (val("vue") || "a_traiter") as keyof typeof VUES;
   const a = await analyser(s, null);
   const jour = a.aujourdhui;
-  const filtres: Record<keyof typeof VUES, (e: EcheanceSuivie) => boolean> = {
+  // Filtres (listes déroulantes) : seules les échéances des positions retenues sont suivies ici.
+  const filtres = await preparerFiltres(q, a.date);
+  const actifs = filtres.actifs.length > 0;
+  const lignesRetenues = a.situation.lignes.filter((l) => filtres.retenue(l));
+  const echeances = a.situation.echeances.filter((e) => !actifs || (e.ligne && filtres.retenue(e.ligne)));
+  const suffixe = new URLSearchParams(filtres.adresse).toString();
+  const avecFiltres = (adresse: string) => (suffixe ? `${adresse}&${suffixe}` : adresse);
+  const parVue: Record<keyof typeof VUES, (e: EcheanceSuivie) => boolean> = {
     a_traiter: (e) => ["a_encaisser", "en_retard", "partielle", "litige"].includes(e.statut),
     a_venir: (e) => e.statut === "prevue" && e.dateReglementPrevue <= ajouterJours(jour, 90),
     encaissees: (e) => e.statut === "encaissee",
     toutes: () => true,
   };
   const texte = val("q").toLowerCase();
-  const lignes = a.situation.echeances
+  const lignes = echeances
     .filter((e) => e.ligne)
-    .filter(filtres[vue] ?? filtres.a_traiter)
+    .filter(parVue[vue] ?? parVue.a_traiter)
     .filter((e) => !texte || `${e.ligne?.instrument.code} ${e.ligne?.instrument.libelle} ${e.ligne?.position.conservateur}`.toLowerCase().includes(texte))
     .sort((x, y) => (vue === "encaissees" ? y.dateReglementPrevue.localeCompare(x.dateReglementPrevue) : x.dateReglementPrevue.localeCompare(y.dateReglementPrevue)));
   const selection = val("echeance") ? a.situation.echeances.find((e) => e.id === val("echeance")) : undefined;
@@ -48,14 +57,14 @@ export default async function Encaissements(props: PageProps<"/encaissements">) 
         [selection.id],
       )
     : [];
-  const retard = a.situation.echeances.filter((e) => e.statut === "en_retard" || e.statut === "partielle");
-  const litiges = a.situation.echeances.filter((e) => e.statut === "litige");
-  const aEncaisser = a.situation.echeances.filter((e) => e.statut === "a_encaisser");
-  const monoDevise = new Set(a.situation.echeances.map((e) => e.ligne?.instrument.devise)).size <= 1;
+  const retard = echeances.filter((e) => e.statut === "en_retard" || e.statut === "partielle");
+  const litiges = echeances.filter((e) => e.statut === "litige");
+  const aEncaisser = echeances.filter((e) => e.statut === "a_encaisser");
+  const monoDevise = new Set(echeances.map((e) => e.ligne?.instrument.devise)).size <= 1;
 
   // Synthèse capital / intérêts par devise (les devises ne sont jamais additionnées).
   const debutAnnee = `${jour.slice(0, 4)}-01-01`;
-  const flux = await fluxEncaisses(s, debutAnnee, jour);
+  const flux = await fluxEncaisses(s, debutAnnee, jour, actifs ? lignesRetenues.map((l) => l.position.id) : null);
   type Synthese = { devise: string; encours: number; icne: number; capitalRecu: number; interetRecu: number; capitalEchu: number; interetEchu: number; encaissements: number };
   const synthese = new Map<string, Synthese>();
   const ligneDevise = (d: string) => {
@@ -63,12 +72,12 @@ export default async function Encaissements(props: PageProps<"/encaissements">) 
     synthese.set(d, x);
     return x;
   };
-  for (const l of a.situation.lignes) {
+  for (const l of lignesRetenues) {
     const x = ligneDevise(l.instrument.devise);
     x.encours += l.nominal;
     x.icne += l.couponCouru;
   }
-  for (const e of a.situation.echeances)
+  for (const e of echeances)
     if (e.ligne && estImpaye(e.statut) && e.dateReglementPrevue <= jour) {
       const x = ligneDevise(e.ligne.instrument.devise);
       x.capitalEchu += Math.max(0, e.resteCapital);
@@ -85,13 +94,23 @@ export default async function Encaissements(props: PageProps<"/encaissements">) 
 
   return (
     <>
-      <EnTete titre="Encaissements" sousTitre={`Flux prévus et flux réellement reçus · tolérance de ${a.parametres.toleranceEncaissement} jour(s) avant retard`} />
+      <EnTete
+        titre="Encaissements"
+        sousTitre={`Flux prévus et flux réellement reçus · tolérance de ${a.parametres.toleranceEncaissement} jour(s) avant retard${actifs ? ` · filtré (${filtres.actifs.length})` : ""}`}
+      />
       <Contenu>
+        {a.situation.lignes.length > 0 && (
+          <Filtres
+            filtres={filtres.listes(a.situation.lignes)}
+            conserver={{ vue: val("vue") || undefined, q: val("q") || undefined }}
+            reinitialiser={actifs ? `/encaissements?vue=${vue}` : undefined}
+          />
+        )}
         <div className="grid-kpi">
           <Indicateur libelle="À encaisser (dans la tolérance)" valeur={aEncaisser.length} icone="horloge" ton="alerte" detail={monoDevise ? `${compact(aEncaisser.reduce((t, e) => t + e.reste, 0))} attendus` : "Plusieurs devises"} />
           <Indicateur libelle="En retard ou partielles" valeur={retard.length} icone="alerte" ton={retard.length ? "erreur" : "bon"} detail={monoDevise ? `${compact(retard.reduce((t, e) => t + e.reste, 0))} restant dus` : "Plusieurs devises"} />
           <Indicateur libelle="En litige" valeur={litiges.length} icone="controles" ton={litiges.length ? "erreur" : "bon"} detail={monoDevise ? `${compact(litiges.reduce((t, e) => t + e.reste, 0))} en jeu` : "Plusieurs devises"} />
-          <Indicateur libelle="Encaissées (toutes dates)" valeur={a.situation.echeances.filter((e) => e.statut === "encaissee").length} icone="coche" ton="bon" detail="Échéances soldées" />
+          <Indicateur libelle="Encaissées (toutes dates)" valeur={echeances.filter((e) => e.statut === "encaissee").length} icone="coche" ton="bon" detail="Échéances soldées" />
         </div>
         {une && (
           <div className="grid-kpi">
@@ -128,7 +147,7 @@ export default async function Encaissements(props: PageProps<"/encaissements">) 
           <Carte
             titre={`Échéance du ${dateFr(selection.dateContractuelle)} — ${selection.ligne.instrument.code} · ${selection.ligne.position.conservateur}`}
             sousTitre={`Règlement prévu le ${dateFr(selection.dateReglementPrevue)} · ${selection.ligne.instrument.devise}`}
-            action={<Link className="btn-sec btn-mini" href={`/encaissements?vue=${vue}`}>Fermer</Link>}
+            action={<Link className="btn-sec btn-mini" href={avecFiltres(`/encaissements?vue=${vue}`)}>Fermer</Link>}
           >
             <div className="rangee deux" style={{ marginBottom: 0 }}>
               <div>
@@ -206,14 +225,15 @@ export default async function Encaissements(props: PageProps<"/encaissements">) 
 
         <nav className="stknav noprint">
           {Object.entries(VUES).map(([k, l]) => (
-            <Link key={k} href={`/encaissements?vue=${k}`} className={k === vue ? "on" : ""}>{l}</Link>
+            <Link key={k} href={avecFiltres(`/encaissements?vue=${k}`)} className={k === vue ? "on" : ""}>{l}</Link>
           ))}
         </nav>
         <form className="barre-filtres noprint" method="get">
           <input type="hidden" name="vue" value={vue} />
+          {Object.entries(filtres.adresse).map(([k, v]) => <input key={k} type="hidden" name={k} value={v} />)}
           <input className="champ" name="q" defaultValue={val("q")} placeholder="Code, libellé, conservateur…" />
           <button className="btn-sec">Filtrer</button>
-          {val("q") && <Link className="btn-sec" href={`/encaissements?vue=${vue}`}>Réinitialiser</Link>}
+          {val("q") && <Link className="btn-sec" href={avecFiltres(`/encaissements?vue=${vue}`)}>Réinitialiser</Link>}
         </form>
         <Carte titre={`${lignes.length} échéance(s) — ${VUES[vue]}`} flush>
           {lignes.length === 0 ? <Vide>Rien à afficher.</Vide> : (
@@ -224,7 +244,7 @@ export default async function Encaissements(props: PageProps<"/encaissements">) 
                   {lignes.slice(0, 400).map((e) => (
                     <tr key={e.id}>
                       <td className="nowrap">
-                        <Link href={`/encaissements?vue=${vue}&echeance=${e.id}`}>{dateFr(e.dateReglementPrevue)}</Link>
+                        <Link href={avecFiltres(`/encaissements?vue=${vue}&echeance=${e.id}`)}>{dateFr(e.dateReglementPrevue)}</Link>
                         {e.dateReglementPrevue < jour && e.reste > 0.01 && <div className="petit neg">{joursEntre(e.dateReglementPrevue, jour)} j de retard</div>}
                       </td>
                       <td><Link href={`/positions/${e.positionId}`}>{e.ligne?.instrument.code}</Link> <span className="petit mut">{e.ligne?.instrument.devise}</span><div className="petit mut">{e.ligne?.position.conservateur}</div></td>

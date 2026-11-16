@@ -277,6 +277,13 @@ for (const [chemin, nom] of [["/", "10_tableau_de_bord"], ["/analyses?axe=maturi
   const apres = await page.locator(".kpi").first().innerText();
   verifier((await page.locator("text=filtré (1)").count()) === 1 && (await page.locator("a", { hasText: "Effacer les filtres" }).count()) === 1, `tableau de bord filtré par conservateur (${avant.split("\n")[1]} → ${apres.split("\n")[1]})`);
   await capture("10b_tableau_de_bord_filtre");
+  const conservateur = new URL(page.url()).searchParams.get("conservateur");
+  await aller(`/echeancier?conservateur=${encodeURIComponent(conservateur)}`);
+  verifier((await page.locator("text=filtré (1)").count()) === 1, "échéancier filtré par conservateur");
+  await aller(`/encaissements?conservateur=${encodeURIComponent(conservateur)}`);
+  verifier((await page.locator("text=filtré (1)").count()) === 1, "encaissements filtrés par conservateur");
+  const r = await page.request.get(`${ADRESSE}/exports/inventaire?format=xlsx&conservateur=${encodeURIComponent(conservateur)}`);
+  verifier(r.status() === 200, "export Excel filtré par conservateur");
 }
 for (const etat of ["inventaire", "echeancier", "tombees", "tombees_isin", "grevage", "encaissements", "rapprochement", "anomalies", "situation", "historique"]) {
   const r = await page.request.get(`${ADRESSE}/exports/${etat}?date=2026-01-31&devise=XOF&format=xlsx`);

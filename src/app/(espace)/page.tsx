@@ -3,13 +3,13 @@
  */
 import Link from "next/link";
 import { SelecteurDate } from "@/composants/client/Coquille";
-import { Filtres, type FiltreListe } from "@/composants/client/Filtres";
+import { Filtres } from "@/composants/client/Filtres";
 import { AvisPerimetre } from "@/composants/AvisPerimetre";
 import { Contenu, EnTete } from "@/composants/EnTete";
 import { Badge, Barres, Carte, EnTeteImpression, Indicateur, Message, TitreZone, Vide } from "@/composants/ui";
 import { analyser, fluxEncaisses } from "@/donnees/portefeuille";
 import { lire } from "@/lib/db";
-import { AXES, ORDRE_TRANCHES, VALEUR_VIDE } from "@/lib/axes";
+import { controlesRetenus, preparerFiltres } from "@/donnees/filtres";
 import { exigerSession } from "@/lib/session";
 import { compact, dateFr, montant, moisFr, pourcent } from "@/lib/format";
 import {
@@ -21,12 +21,7 @@ import {
   moyennePonderee,
   totauxParDevise,
   ventiler,
-  type LignePosition,
 } from "@/moteur";
-
-/** Filtres proposés, dans l'ordre d'affichage (axes des analyses + bénéficiaire du grevage). */
-const FILTRES = ["portefeuille", "conservateur", "pays", "zone", "emetteur", "type", "classification", "notation", "maturite", "grevage", "beneficiaire", "instrument"] as const;
-type NomFiltre = (typeof FILTRES)[number];
 
 export default async function TableauDeBord(props: PageProps<"/">) {
   const s = await exigerSession();
@@ -36,38 +31,16 @@ export default async function TableauDeBord(props: PageProps<"/">) {
   const devise = typeof q.devise === "string" ? q.devise : (totaux.find((t) => t.devise === parametres.deviseReference)?.devise ?? totaux[0]?.devise ?? parametres.deviseReference);
 
   // Filtres : chaque indicateur, graphique, liste et alerte ci-dessous ne porte que sur les positions retenues.
-  const choix = Object.fromEntries(FILTRES.map((k) => [k, typeof q[k] === "string" ? (q[k] as string) : ""])) as Record<NomFiltre, string>;
-  const actifs = FILTRES.filter((k) => choix[k]);
-  // Bénéficiaires des grevages actifs à la date d'arrêté, par position.
-  const beneficiaires = new Map<string, Set<string>>();
-  for (const g of await lire<{ position_id: string; nom: string }>(
-    `select distinct g.position_id::text as position_id, b.nom from grevages g join contreparties b on b.id = g.beneficiaire_id
-      where g.statut in ('actif','leve') and g.date_debut <= $1 and (g.date_fin is null or g.date_fin > $1)`,
-    [date],
-  ))
-    beneficiaires.set(g.position_id, (beneficiaires.get(g.position_id) ?? new Set()).add(g.nom));
-  const valeursDe = (k: NomFiltre, l: LignePosition): string[] =>
-    k === "beneficiaire" ? [...(beneficiaires.get(l.position.id) ?? [VALEUR_VIDE])] : [AXES[k].cle(l) || VALEUR_VIDE];
-  const retenue = (l: LignePosition, sauf?: NomFiltre) => actifs.every((k) => k === sauf || valeursDe(k, l).includes(choix[k]));
+  const filtres = await preparerFiltres(q, date);
+  const actifs = filtres.actifs;
   const lignesDevise = situation.lignes.filter((l) => l.instrument.devise === devise);
-  const filtrees = lignesDevise.filter((l) => retenue(l));
+  const filtrees = lignesDevise.filter((l) => filtres.retenue(l));
   const lignes = filtrees.filter((l) => l.nominal > 0);
   const t = totauxParDevise(filtrees).find((x) => x.devise === devise);
   const positionsRetenues = new Set(filtrees.map((l) => l.position.id));
-  const libelleValeur = (k: NomFiltre, v: string) => (v === VALEUR_VIDE ? (k === "beneficiaire" ? "Non grevé" : "Non renseigné") : v);
-  // Options de chaque liste : valeurs présentes compte tenu des AUTRES filtres (nombre de positions entre parenthèses).
-  const listes: FiltreListe[] = FILTRES.map((k) => {
-    const compte = new Map<string, number>();
-    for (const l of lignesDevise) if (l.nominal > 0 && retenue(l, k)) for (const v of valeursDe(k, l)) compte.set(v, (compte.get(v) ?? 0) + 1);
-    if (choix[k] && !compte.has(choix[k])) compte.set(choix[k], 0);
-    const rang = (v: string) => (k === "maturite" ? (ORDRE_TRANCHES.indexOf(v) + 99) % 99 : 0);
-    const options = [...compte.entries()]
-      .sort(([a], [b]) => rang(a) - rang(b) || (a === VALEUR_VIDE ? 1 : 0) - (b === VALEUR_VIDE ? 1 : 0) || a.localeCompare(b, "fr"))
-      .map(([v, n]) => ({ valeur: v, libelle: `${libelleValeur(k, v)} (${n})` }));
-    return { nom: k, libelle: k === "beneficiaire" ? "Bénéficiaire du grevage" : AXES[k].libelle, valeur: choix[k], options };
-  });
-  const filtresAdresse = Object.fromEntries(actifs.map((k) => [k, choix[k]]));
-  const resumeFiltres = actifs.map((k) => `${k === "beneficiaire" ? "Bénéficiaire" : AXES[k].libelle} : ${libelleValeur(k, choix[k])}`).join(" · ");
+  const listes = filtres.listes(lignesDevise);
+  const filtresAdresse = filtres.adresse;
+  const resumeFiltres = filtres.resume;
   const instruments = new Set(lignes.map((l) => l.instrument.id));
   const { flux, horsHorizon } = fluxProjetes(lignes, date, 365);
   const capital12 = flux.reduce((x, e) => x + e.capitalDu, 0);
@@ -90,15 +63,11 @@ export default async function TableauDeBord(props: PageProps<"/">) {
   const prochaines = echeancesDevise
     .filter((e) => e.dateReglementPrevue >= date && e.dateReglementPrevue <= ajouterJours(date, 30) && e.statut !== "encaissee")
     .sort((a, b) => a.dateReglementPrevue.localeCompare(b.dateReglementPrevue));
-  // Avec des filtres, seules les alertes rattachées à une position, une échéance ou un instrument retenus sont montrées.
-  const echeancesRetenues = new Set(echeancesDevise.map((e) => e.id));
-  const instrumentsRetenus = new Set(filtrees.map((l) => l.instrument.id));
-  const alerteRetenue = (lien: string) => {
-    const m = lien.match(/^\/(positions|instruments)\/([0-9a-f-]{36})|echeance=([0-9a-f-]{36})/);
-    if (!m) return false;
-    return m[1] === "positions" ? positionsRetenues.has(m[2]) : m[1] === "instruments" ? instrumentsRetenus.has(m[2]) : echeancesRetenues.has(m[3]);
-  };
-  const ouvertes = controles.filter((c) => c.niveau !== "info" && (!actifs.length || alerteRetenue(c.lien)));
+  // Avec des filtres, seules les alertes rattachées aux positions retenues sont montrées.
+  const alertes = controles.filter((c) => c.niveau !== "info");
+  const ouvertes = actifs.length
+    ? controlesRetenus(alertes, { positions: positionsRetenues, echeances: new Set(echeancesDevise.map((e) => e.id)), instruments: new Set(filtrees.map((l) => l.instrument.id)) })
+    : alertes;
   const coupon = moyennePonderee(lignes.filter((l) => !l.instrument.precompte).map((l) => ({ valeur: l.instrument.tauxCoupon, poids: l.nominal })));
 
   // Tombées mensuelles sur 12 mois (capital et intérêts).

@@ -5,6 +5,9 @@ import Link from "next/link";
 import { Contenu, EnTete } from "@/composants/EnTete";
 import { Carte, Champ, Message } from "@/composants/ui";
 import { ETATS, HORIZONS_TOMBEES, type NomEtat } from "@/donnees/etats";
+import { preparerFiltres } from "@/donnees/filtres";
+import { analyser } from "@/donnees/portefeuille";
+import { Filtres } from "@/composants/client/Filtres";
 import { listesReferentiels, lireParametres } from "@/donnees/referentiels";
 import { exigerSession } from "@/lib/session";
 import { aujourdhui } from "@/lib/format";
@@ -22,10 +25,15 @@ const DESCRIPTIONS: Record<NomEtat, [string, string]> = {
   historique: ["Opérations, initiateurs, validateurs, motifs.", "/operations"],
 };
 
-export default async function Etats() {
+export default async function Etats(props: PageProps<"/etats">) {
   const s = await exigerSession();
-  const [r, p] = await Promise.all([listesReferentiels(), lireParametres()]);
   if (!s.peut("exporter")) return null;
+  const q = await props.searchParams;
+  const [r, p, a] = await Promise.all([listesReferentiels(), lireParametres(), analyser(s, null)]);
+  // Filtres communs à tous les exports (options calculées sur la situation du jour).
+  const filtres = await preparerFiltres(q, a.date);
+  const suffixe = new URLSearchParams(filtres.adresse).toString();
+  const avecFiltres = (lien: string) => (suffixe ? `${lien}${lien.includes("?") ? "&" : "?"}${suffixe}` : lien);
   return (
     <>
       <EnTete titre="États et exports" sousTitre="Chaque état indique la date d'arrêté, les filtres, la devise, l'unité et la date de génération" />
@@ -33,12 +41,22 @@ export default async function Etats() {
         <Message ton="info">
           Choisissez la date d&apos;arrêté et la devise, puis téléchargez l&apos;état. Les montants de devises différentes ne sont jamais additionnés : sans devise choisie, chaque ligne porte sa devise. Pour un PDF, ouvrez l&apos;écran lié puis « Imprimer ». Chaque export est journalisé.
         </Message>
+        {a.situation.lignes.length > 0 && (
+          <>
+            <p className="petit mut" style={{ margin: "0 0 6px" }}>
+              <b>Filtres appliqués à tous les exports ci-dessous</b> (rappelés sur la couverture de chaque classeur) :
+            </p>
+            <Filtres filtres={filtres.listes(a.situation.lignes)} reinitialiser={filtres.actifs.length ? "/etats" : undefined} />
+          </>
+        )}
+        {filtres.actifs.length > 0 && <Message ton="alerte">Exports filtrés — {filtres.resume}.</Message>}
         <Carte titre="Paramètres des exports" flush>
           {Object.entries(ETATS).map(([k, titre]) => (
             <form key={k} method="get" action={`/exports/${k}`} className="ligne-export" style={{ display: "grid", gridTemplateColumns: "minmax(0,1.6fr) 150px 130px 130px auto", gap: 12, alignItems: "end", padding: "14px 20px", borderTop: "1px solid var(--line)" }}>
+              {Object.entries(filtres.adresse).map(([n, v]) => <input key={n} type="hidden" name={n} value={v} />)}
               <div>
                 <b>{titre}</b>
-                <div className="petit mut">{DESCRIPTIONS[k as NomEtat][0]} <Link href={DESCRIPTIONS[k as NomEtat][1]}>Voir à l&apos;écran</Link></div>
+                <div className="petit mut">{DESCRIPTIONS[k as NomEtat][0]} <Link href={avecFiltres(DESCRIPTIONS[k as NomEtat][1])}>Voir à l&apos;écran</Link></div>
               </div>
               <Champ libelle="Date d'arrêté"><input className="champ" type="date" name="date" defaultValue={aujourdhui()} /></Champ>
               <Champ libelle="Devise">

@@ -9,6 +9,7 @@ import type { Session } from "@/lib/session";
 import type { Colonne, Ligne } from "@/lib/excel";
 import { moisFr } from "@/lib/format";
 import { analyser } from "./portefeuille";
+import { controlesRetenus, preparerFiltres } from "./filtres";
 import type { Photographie } from "./arretes";
 import { ajouterMois, anneeDe, arrondi2, fluxProjetes, interetNet, joursEntre, LIBELLES_NIVEAU, LIBELLES_OPERATION, LIBELLES_STATUT_ECHEANCE, moisDe, type TypeOperation } from "@/moteur";
 
@@ -69,7 +70,7 @@ export const HORIZONS_TOMBEES = [3, 6, 12, 24, 36, 60, 0] as const;
 export async function construireEtat(
   s: Session,
   nom: NomEtat,
-  p: { date?: string | null; devise?: string | null; arrete?: string | null; horizon?: string | null },
+  p: { date?: string | null; devise?: string | null; arrete?: string | null; horizon?: string | null; filtres?: Record<string, string> },
 ): Promise<Etat> {
   // Situation à un arrêté figé : on restitue la photographie telle qu'elle a été verrouillée.
   if (nom === "situation" && p.arrete) {
@@ -80,7 +81,7 @@ export async function construireEtat(
         titre: `${ETATS.situation} (arrêté ${a.statut})`,
         date: a.date_arrete,
         devise: "Toutes devises (colonne Devise)",
-        filtres: `Photographie de l'arrêté (${a.resultat.versionMoteur})`,
+        filtres: `Photographie de l'arrêté (${a.resultat.versionMoteur})${p.filtres && Object.keys(p.filtres).length ? " · filtres non appliqués à une photographie figée" : ""}`,
         etablissement: etab,
         feuilles: [
           {
@@ -96,8 +97,13 @@ export async function construireEtat(
 
   const a = await analyser(s, p.date ?? null);
   const devise = p.devise || "";
-  const lignes = a.situation.lignes.filter((l) => !devise || l.instrument.devise === devise);
-  const filtres = [devise && `Devise ${devise}`, s.u.portefeuilles.length && "Périmètre restreint à vos portefeuilles"].filter(Boolean).join(" · ");
+  // Filtres en listes déroulantes (pays, conservateur…) : appliqués à toutes les feuilles de l'état.
+  const filtrage = await preparerFiltres(p.filtres ?? {}, a.date);
+  const filtre = filtrage.actifs.length > 0;
+  const retenues = a.situation.lignes.filter((l) => filtrage.retenue(l));
+  const positionsFiltre = filtre ? retenues.map((l) => l.position.id) : null;
+  const lignes = retenues.filter((l) => !devise || l.instrument.devise === devise);
+  const filtres = [devise && `Devise ${devise}`, filtrage.resume, s.u.portefeuilles.length && "Périmètre restreint à vos portefeuilles"].filter(Boolean).join(" · ");
   const base = { date: a.date, devise: devise || "Toutes devises (colonne Devise)", filtres, etablissement: a.parametres.nomEtablissement };
   const lignePosition = (l: (typeof lignes)[number]): Ligne => ({
     code: l.instrument.code,
@@ -340,8 +346,8 @@ export async function construireEtat(
            from grevages g join contreparties b on b.id = g.beneficiaire_id join positions p on p.id = g.position_id
            join instruments i on i.id = p.instrument_id join conservateurs c on c.id = p.conservateur_id join portefeuilles f on f.id = p.portefeuille_id
           where g.statut in ('actif','leve','soumis') and g.date_debut <= $1 and (cardinality($2::uuid[]) = 0 or p.portefeuille_id = any($2::uuid[]))
-            and ($3 = '' or i.devise_code = $3) order by b.nom, i.code_interne`,
-        [a.date, s.u.portefeuilles, devise],
+            and ($3 = '' or i.devise_code = $3) and ($4::uuid[] is null or p.id = any($4::uuid[])) order by b.nom, i.code_interne`,
+        [a.date, s.u.portefeuilles, devise, positionsFiltre],
       );
       return {
         ...base,
@@ -379,7 +385,9 @@ export async function construireEtat(
       };
     }
     case "encaissements": {
-      const ech = a.situation.echeances.filter((e) => e.ligne && (!devise || e.ligne.instrument.devise === devise) && e.dateReglementPrevue <= a.date);
+      const ech = a.situation.echeances.filter(
+        (e) => e.ligne && (!devise || e.ligne.instrument.devise === devise) && e.dateReglementPrevue <= a.date && (!filtre || filtrage.retenue(e.ligne)),
+      );
       const debutAnnee = `${a.date.slice(0, 4)}-01-01`;
       const recus = await lire<Ligne>(
         `select x.date_valeur as date, i.code_interne as code, i.libelle, c.nom as conservateur, e.date_contractuelle as echeance,
@@ -388,8 +396,9 @@ export async function construireEtat(
            join conservateurs c on c.id = p.conservateur_id left join echeances e on e.id = x.echeance_id
           where x.statut = 'actif' and x.date_valeur between $3 and $4
             and (cardinality($1::uuid[]) = 0 or p.portefeuille_id = any($1::uuid[])) and ($2 = '' or i.devise_code = $2)
+            and ($5::uuid[] is null or p.id = any($5::uuid[]))
           order by x.date_valeur, i.code_interne`,
-        [s.u.portefeuilles, devise, debutAnnee, a.date],
+        [s.u.portefeuilles, devise, debutAnnee, a.date, positionsFiltre],
       );
       return {
         ...base,
@@ -463,9 +472,9 @@ export async function construireEtat(
            from positions p join conservateurs c on c.id = p.conservateur_id join instruments i on i.id = p.instrument_id
            join portefeuilles f on f.id = p.portefeuille_id
           where (cardinality($1::uuid[]) = 0 or p.portefeuille_id = any($1::uuid[])) and ($2 = '' or i.devise_code = $2)
-            and (p.nominal_actuel <> 0 or p.nominal_releve is not null)
+            and (p.nominal_actuel <> 0 or p.nominal_releve is not null) and ($3::uuid[] is null or p.id = any($3::uuid[]))
           order by c.nom, i.code_interne`,
-        [s.u.portefeuilles, devise],
+        [s.u.portefeuilles, devise, positionsFiltre],
       );
       return {
         ...base,
@@ -496,6 +505,13 @@ export async function construireEtat(
         "select s.cle, s.statut, u.nom as responsable, s.commentaire from suivi_controles s left join utilisateurs u on u.id = s.responsable_id",
       );
       const parCle = new Map(suivis.map((x) => [x.cle, x]));
+      const controles = filtre
+        ? controlesRetenus(a.controles, {
+            positions: new Set(retenues.map((l) => l.position.id)),
+            echeances: new Set(a.situation.echeances.filter((e) => e.ligne && filtrage.retenue(e.ligne)).map((e) => e.id)),
+            instruments: new Set(retenues.map((l) => l.instrument.id)),
+          })
+        : a.controles;
       const q = await lire<Ligne>(
         "select i.nom_fichier as fichier, q.numero_ligne as ligne, q.motif, q.statut, q.commentaire from quarantaine q join imports i on i.id = q.import_id order by i.cree_le, q.numero_ligne",
       );
@@ -515,7 +531,7 @@ export async function construireEtat(
               { titre: "Responsable", cle: "responsable" },
               { titre: "Commentaire", cle: "commentaire", largeur: 30 },
             ],
-            lignes: a.controles.map((c) => ({
+            lignes: controles.map((c) => ({
               niveau: LIBELLES_NIVEAU[c.niveau],
               famille: c.famille,
               objet: c.libelle,
@@ -549,8 +565,9 @@ export async function construireEtat(
            join conservateurs c on c.id = p.conservateur_id left join utilisateurs ui on ui.id = o.initiateur_id
            left join utilisateurs uv on uv.id = o.validateur_id
           where (cardinality($1::uuid[]) = 0 or p.portefeuille_id = any($1::uuid[])) and o.date_effet <= $2
+            and ($3::uuid[] is null or p.id = any($3::uuid[]) or o.position_destination_id = any($3::uuid[]))
           order by o.date_effet, o.numero`,
-        [s.u.portefeuilles, a.date],
+        [s.u.portefeuilles, a.date, positionsFiltre],
       );
       return {
         ...base,
