@@ -182,6 +182,12 @@ textarea.champ{height:auto;min-height:76px;resize:vertical}
 .actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .barre-filtres{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px}
 .barre-filtres .champ{width:auto;min-width:160px}
+/* Filtres du tableau de bord : listes déroulantes appliquées immédiatement */
+.filtres-tableau{display:grid;grid-template-columns:repeat(auto-fill,minmax(165px,1fr));gap:10px 12px;align-items:end;margin-bottom:16px;padding:14px 16px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius)}
+.filtres-tableau .champ{width:100%;min-width:0;padding-top:6px;padding-bottom:6px}
+.filtres-tableau label.actif .champ{border-color:var(--acc);background:var(--acc-soft);color:var(--acc);font-weight:600}
+@media (max-width:640px){.filtres-tableau{grid-template-columns:1fr 1fr;padding:12px;gap:8px 10px}.filtres-tableau .lib{font-size:11px}}
+.filtres-tableau label.actif .lib{color:var(--acc)}
 details.depliant>summary{cursor:pointer;list-style:none;font-weight:600;color:var(--acc);font-size:13.5px}
 details.depliant>summary::-webkit-details-marker{display:none}
 details.depliant>summary::before{content:"+ "}

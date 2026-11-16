@@ -295,15 +295,19 @@ export interface FluxEncaisses {
   nombre: number;
 }
 
-/** Capital et intérêts effectivement encaissés entre deux dates (incluses), par devise. */
-export async function fluxEncaisses(s: Session, du: string, au: string): Promise<FluxEncaisses[]> {
+/**
+ * Capital et intérêts effectivement encaissés entre deux dates (incluses), par devise.
+ * `positions` restreint le calcul à certaines positions (filtres du tableau de bord) ; null = toutes.
+ */
+export async function fluxEncaisses(s: Session, du: string, au: string, positions: string[] | null = null): Promise<FluxEncaisses[]> {
   return lire<FluxEncaisses>(
     `select i.devise_code as devise, coalesce(sum(x.montant_capital), 0) as capital, coalesce(sum(x.montant_interet), 0) as interet,
             count(*)::int as nombre
        from encaissements x join positions p on p.id = x.position_id join instruments i on i.id = p.instrument_id
       where x.statut = 'actif' and x.date_valeur between $2 and $3
         and (cardinality($1::uuid[]) = 0 or p.portefeuille_id = any($1::uuid[]))
+        and ($4::uuid[] is null or x.position_id = any($4::uuid[]))
       group by i.devise_code`,
-    [pfAutorises(s), du, au],
+    [pfAutorises(s), du, au, positions],
   );
 }

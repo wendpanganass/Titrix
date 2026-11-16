@@ -10,20 +10,7 @@ import { analyser } from "@/donnees/portefeuille";
 import { exigerSession } from "@/lib/session";
 import { compact, dateFr, montant, nombre, pourcent } from "@/lib/format";
 import { FICHES_INDICATEURS, moyennePonderee, ratio, totauxParDevise, ventiler, type LignePosition } from "@/moteur";
-
-const AXES: Record<string, { libelle: string; cle: (l: LignePosition) => string }> = {
-  pays: { libelle: "Pays", cle: (l) => l.instrument.pays },
-  zone: { libelle: "Zone", cle: (l) => l.instrument.zone },
-  emetteur: { libelle: "Émetteur", cle: (l) => l.instrument.emetteur },
-  conservateur: { libelle: "Conservateur", cle: (l) => l.position.conservateur },
-  instrument: { libelle: "Instrument", cle: (l) => `${l.instrument.code} — ${l.instrument.libelle}` },
-  type: { libelle: "Type d'instrument", cle: (l) => l.instrument.type },
-  portefeuille: { libelle: "Portefeuille", cle: (l) => l.position.portefeuille },
-  classification: { libelle: "Classification comptable", cle: (l) => l.position.classification || l.instrument.classification },
-  notation: { libelle: "Notation", cle: (l) => l.instrument.notation },
-  grevage: { libelle: "Statut de grevage", cle: (l) => l.statutGrevage },
-  maturite: { libelle: "Tranche de maturité", cle: (l) => l.tranche },
-};
+import { AXES } from "@/lib/axes";
 
 export default async function Analyses(props: PageProps<"/analyses">) {
   const s = await exigerSession();

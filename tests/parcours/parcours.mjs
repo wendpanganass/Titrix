@@ -269,6 +269,15 @@ for (const [chemin, nom] of [["/", "10_tableau_de_bord"], ["/analyses?axe=maturi
   await aller(chemin);
   await capture(nom);
 }
+// Filtres du tableau de bord : une liste déroulante restreint tous les indicateurs.
+{
+  await aller("/");
+  const avant = await page.locator(".kpi").first().innerText();
+  await Promise.all([page.waitForURL(/conservateur=/), page.selectOption("select[name=conservateur]", { index: 1 })]);
+  const apres = await page.locator(".kpi").first().innerText();
+  verifier((await page.locator("text=filtré (1)").count()) === 1 && (await page.locator("a", { hasText: "Effacer les filtres" }).count()) === 1, `tableau de bord filtré par conservateur (${avant.split("\n")[1]} → ${apres.split("\n")[1]})`);
+  await capture("10b_tableau_de_bord_filtre");
+}
 for (const etat of ["inventaire", "echeancier", "tombees", "tombees_isin", "grevage", "encaissements", "rapprochement", "anomalies", "situation", "historique"]) {
   const r = await page.request.get(`${ADRESSE}/exports/${etat}?date=2026-01-31&devise=XOF&format=xlsx`);
   verifier(r.status() === 200 && r.headers()["content-type"].includes("spreadsheetml"), `export Excel « ${etat} »`);
